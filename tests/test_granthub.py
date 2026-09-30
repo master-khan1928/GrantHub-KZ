@@ -152,6 +152,17 @@ class DatabaseTests(unittest.TestCase):
         found = run(db.search_grants("NU", 50))
         self.assertTrue(found and all("nazarbayev" in g["name"].lower() or "назарбаев" in g["name"].lower() for g in found))
 
+    def test_search_understands_forms_topics_and_typos(self):
+        names = lambda q, scope="all": [g["name"] for g in run(db.search_grants(q, 10, scope))]
+        self.assertTrue(all("КазНМУ" in n for n in names("медицинские")) and names("медицинские"))
+        self.assertTrue(any("IT" in n or "IITU" in n for n in names("айти")))
+        self.assertEqual(names("германя"), names("германия"))          # опечатка
+        self.assertTrue(names("германия") and all("Немецк" in n for n in names("германия")))
+        self.assertTrue(all("КБТУ" in n for n in names("кбту")) and names("кбту"))
+        self.assertTrue(all("Nazarbayev" in n or "Назарбаев" in n for n in names("NU")) and names("NU"))
+        self.assertEqual(names("казахстан", "abroad"), [])
+        self.assertEqual(names("asdfgh"), [])
+
     def test_cleanup_deletes_only_confirmed(self):
         saved = run(save_candidates([
             candidate(name="Alpha programme", link="https://a.example.de/1", source=None, deadline_date=day(1)),

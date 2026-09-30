@@ -786,55 +786,40 @@ async def get_all_active_grants() -> list:
             return [dict(r) for r in await cursor.fetchall()]
 
 
-def _lower(value):
-    return value.lower() if isinstance(value, str) else value
-
-
-async def _search_terms(db, keyword: str) -> list:
-    """Запрос + синонимы: «NU» находит и «Nazarbayev University», и «Назарбаев Университет»."""
-    async with db.execute(
-        "SELECT canonical FROM synonyms WHERE alias_norm = ? OR lower_u(canonical) = ?", (keyword, keyword)
-    ) as cursor:
-        canonicals = {r[0] for r in await cursor.fetchall()}
-    # известное сокращение ищем только по полным названиям: «nu» как подстрока есть и в «MNU»
-    terms = set() if canonicals and len(keyword) < 4 else {keyword}
-    for canonical in canonicals:
-        terms.add(canonical.lower())
-        async with db.execute("SELECT alias_norm FROM synonyms WHERE canonical = ?", (canonical,)) as cursor:
-            # короткие сокращения («НУ») как подстрока совпадают с чем попало — ищем только по длинным
-            terms.update(r[0] for r in await cursor.fetchall() if len(r[0]) >= 4)
-    return sorted(terms)
+async def _synonyms_for(db, keyword: str) -> dict:
+    """{слово запроса: [полные названия]} по словарю админки: «nu» -> [«Nazarbayev University», «Назарбаев Университет»]."""
+    words = keyword.lower().split()
+    out = {}
+    for phrase in {keyword.lower()} | set(words):
+        async with db.execute(
+            "SELECT canonical FROM synonyms WHERE alias_norm = ? OR lower(canonical) = ?", (phrase, phrase)
+        ) as cursor:
+            for (canonical,) in await cursor.fetchall():
+                async with db.execute("SELECT alias FROM synonyms WHERE canonical = ?", (canonical,)) as cur2:
+                    aliases = [r[0] for r in await cur2.fetchall() if len(r[0]) >= 4]
+                for w in (phrase.split() if phrase != keyword.lower() else words):
+                    out.setdefault(w, []).extend([canonical] + aliases)
+    return out
 
 
 async def search_grants(keyword: str, limit: int = 5, scope: str = "all") -> list[dict]:
-    """Поиск по названию, требованиям, покрытию и источнику.
+    """Поиск по каталогу с пониманием словоформ, направлений, стран и опечаток (см. core/search.py).
 
-    Раздел (Казахстан / зарубеж) и страна — это фильтры, а не текст: название страны в запросе
-    превращается в условие по country_code, и слово «Казахстан» в описании зарубежного гранта
-    не подмешивает его в выдачу.
+    Раздел (Казахстан / зарубеж) и страна — это поля базы, а не текст: слово «Казахстан» в описании
+    зарубежного гранта не подмешивает его в выдачу.
     """
-    keyword = " ".join(keyword.lower().split())
-    where, params = [_scope_sql(scope), "record_status = 'active'"], []
-    country = COUNTRY_BY_NAME.get(keyword)
-    compatible = scope == "all" or (scope == "kz") == (country == "KZ")
+    from core.search import rank
+    keyword = " ".join(keyword.split())
+    if not keyword:
+        return []
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
-        await db.create_function("lower_u", 1, _lower, deterministic=True)  # LOWER() в SQLite не знает кириллицу
-        if country and compatible:
-            where.append("country_code = ?")
-            params.append(country)
-        else:
-            fields = ("name", "requirements", "coverage", "COALESCE(source, '')")
-            clauses = []
-            for term in await _search_terms(db, keyword):
-                like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-                clauses += [f"lower_u({f}) LIKE ? ESCAPE '\\'" for f in fields]
-                params += [like] * len(fields)
-            where.append("(" + " OR ".join(clauses) + ")")
+        synonyms = await _synonyms_for(db, keyword)
         async with db.execute(
-            f"SELECT * FROM grants WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?", params + [limit]
+            f"SELECT * FROM grants WHERE {_scope_sql(scope)} AND record_status = 'active' ORDER BY id DESC"
         ) as cursor:
-            return [dict(row) for row in await cursor.fetchall()]
+            rows = [dict(r) for r in await cursor.fetchall()]
+    return rank(rows, keyword, limit, synonyms)
 
 
 def normalize_link(link: str) -> str:
