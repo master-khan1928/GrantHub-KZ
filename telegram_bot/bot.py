@@ -15,11 +15,11 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, ErrorEvent, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BotCommand, ErrorEvent, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from core import ai_scanner
-from core.ai_scanner import ask_gemini_consultant, scan_and_save_grants, ollama_status, warm_up_llm, LLM_PROVIDER, LLM_FALLBACK, GEMINI_MODEL, OLLAMA_MODEL, OLLAMA_CHAT_MODEL
+from core.ai_scanner import ask_gemini_consultant, recheck_links, scan_and_save_grants, ollama_status, warm_up_llm, LLM_PROVIDER, LLM_FALLBACK, GEMINI_MODEL, OLLAMA_MODEL, OLLAMA_CHAT_MODEL
 from core.database import (
     LOGS_DIR, get_user_lang, set_user_lang,
     get_monitor_summary,
@@ -52,6 +52,7 @@ from core.database import (
     get_open_alert_ids,
     get_opened_alerts,
     mark_alert_notified,
+    backup_database,
 )
 from core.geo import flag_emoji
 
@@ -925,8 +926,31 @@ async def send_open_alerts():
         logging.error(f"Ошибка в задаче уведомлений об открытии приёма: {e}", exc_info=True)
 
 
+async def backup_and_send():
+    """Копия базы перед очисткой; файл уходит администратору в Telegram — это и есть внешний бэкап."""
+    try:
+        path = await backup_database()
+        logging.info(f"Резервная копия базы: {path}")
+        if ADMIN_ID:
+            await bot.send_document(ADMIN_ID, FSInputFile(path), caption=f"🗄 Резервная копия базы {path.name}")
+    except Exception as e:
+        logging.error(f"Ошибка резервной копии: {e}", exc_info=True)
+
+
+async def weekly_link_check():
+    """Раз в неделю открывает страницы всех найденных сканером грантов; мёртвые ссылки уводят грант в архив."""
+    try:
+        summary = await recheck_links()
+        if ADMIN_ID and summary["archived"]:
+            await bot.send_message(ADMIN_ID, f"🔗 Проверка ссылок: не открылось {summary['failed']} из {summary['checked']}, "
+                                             f"снято с публикации {summary['archived']}.")
+    except Exception as e:
+        logging.error(f"Ошибка проверки ссылок: {e}", exc_info=True)
+
+
 async def daily_cleanup():
-    """Ежедневно: удалить истёкшие гранты, перенести ежегодные, пересчитать статусы, разослать уведомления."""
+    """Ежедневно: копия базы, удалить истёкшие гранты, перенести ежегодные, пересчитать статусы, разослать уведомления."""
+    await backup_and_send()
     try:
         deleted = await cleanup_expired_grants()
         logging.info(f"Ежедневная очистка: удалено грантов с прошедшим дедлайном: {deleted}")
@@ -1007,6 +1031,7 @@ async def main():
         replace_existing=True,
     )
     scheduler.add_job(daily_cleanup, "cron", hour=0, minute=1, timezone="UTC", id="daily_cleanup", replace_existing=True)
+    scheduler.add_job(weekly_link_check, "cron", day_of_week="mon", hour=3, minute=0, timezone="UTC", id="weekly_links", replace_existing=True)
     scheduler.start()
     asyncio.create_task(daily_cleanup())  # и сразу при старте: бот мог быть выключен в полночь
 

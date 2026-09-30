@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 import json
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response as RawResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -29,11 +29,11 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from core import ai_scanner  # noqa: E402
 from core.ai_scanner import (  # noqa: E402
     GEMINI_MODEL, LLM_FALLBACK, LLM_PROVIDER, OLLAMA_CHAT_MODEL, OLLAMA_MODEL, PROGRAMS, UNIVERSITIES,
-    ask_gemini_consultant, ask_consultant_stream, ollama_status, scan_and_save_grants, warm_up_llm,
+    ask_gemini_consultant, ask_consultant_stream, ollama_status, recheck_links, scan_and_save_grants, warm_up_llm,
 )
 from core.database import (  # noqa: E402
     DB_NAME, DEGREES, LOGS_DIR, REQUIREMENTS, add_favorite, add_open_alert, add_synonym, add_user,
-    cleanup_expired_grants, get_open_alert_ids, get_opened_alerts, remove_open_alert,
+    SORTS, backup_database, cleanup_expired_grants, get_open_alert_ids, get_opened_alerts, remove_open_alert,
     delete_synonym, get_active_countries, get_active_users_count, get_all_users, get_data_version,
     get_events_summary, get_favorites_with_deadlines, get_grant_by_id, get_grants_page, get_monitor_summary,
     get_review_queue, get_scan_runs, get_synonyms, get_user_favorites,
@@ -228,6 +228,65 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+PUBLIC_URL = (os.getenv("PUBLIC_URL") or os.getenv("SITE_URL") or "").strip().rstrip("/")
+
+
+def _html(s) -> str:
+    import html as _h
+    return _h.escape(str(s or ""), quote=True)
+
+
+@app.get("/grant/{grant_id}", response_class=HTMLResponse)
+async def grant_page(grant_id: int):
+    """Отдельная страница гранта: ей можно делиться, её индексируют поисковики."""
+    g = await get_grant_by_id(grant_id)
+    if not g or g.get("record_status") != "active":
+        raise HTTPException(404, "Грант не найден")
+    p = _grant_public(g)
+    from core.geo import flag_emoji
+    region = "Казахстан" if p["category"] == "kz" else "За рубежом"
+    degree = {"bachelor": "Бакалавриат", "master": "Магистратура", "phd": "PhD", "language": "Языковые курсы"}.get(p["degree"], "Все уровни")
+    status = {"open": "приём открыт", "upcoming": "скоро откроется"}.get(p["status"], "")
+    deadline = "круглый год" if p["is_ongoing"] else (p["deadline_date"] or p["deadline"])
+    desc = _html(f"{p['coverage']}. Требования: {p['requirements']}. Дедлайн: {deadline}.")[:300]
+    canonical = f"{PUBLIC_URL}/grant/{grant_id}" if PUBLIC_URL else f"/grant/{grant_id}"
+    rows = "".join(f"<div class=\"g-row\"><div><b>{k}:</b> {_html(v)}</div></div>" for k, v in (
+        ("Покрытие", p["coverage"]), ("Требования", p["requirements"]), ("Дедлайн", deadline),
+        ("Уровень", degree), ("Регион", f"{region} {flag_emoji(p['country_code']) or '🌍'}"), ("Источник", p["source"] or "—")) if v)
+    tags = "".join(f"<span class=\"tag\">{_html(x)}</span>" for x in (status, {"full": "полный грант", "partial": "частичный грант"}.get(p["funding"], "")) if x)
+    return f"""<!doctype html><html lang="ru" data-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_html(p['name'])} — GrantHub</title>
+<meta name="description" content="{desc}"><link rel="canonical" href="{_html(canonical)}">
+<meta property="og:title" content="{_html(p['name'])}"><meta property="og:description" content="{desc}"><meta property="og:type" content="article">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=9">
+<script>if (/Windows/.test(navigator.userAgent) && !/Firefox/.test(navigator.userAgent)) document.documentElement.classList.add('flag-font');</script></head>
+<body><main class="container" style="max-width:820px;margin:0 auto;padding:40px 16px">
+<p class="eyebrow">{_html(region)} · {_html(degree)}</p>
+<h1 class="vtitle">{_html(p['name'])}</h1>
+<div class="g-tags" style="margin:14px 0">{tags}</div>
+<article class="gcard" style="margin-top:20px">{rows}
+<div class="g-foot"><a class="g-apply" href="{_html(p['link'])}" target="_blank" rel="noopener nofollow">Подать заявку ↗</a>
+<a class="btn btn-ghost btn-sm" href="/app#search">Все гранты</a></div></article>
+<p class="muted small" style="margin-top:24px">GrantHub — каталог грантов и стипендий для студентов из Казахстана.</p>
+</main></body></html>"""
+
+
+@app.get("/sitemap.xml")
+async def sitemap():
+    base = PUBLIC_URL or ""
+    urls = [f"{base}/", f"{base}/app"] + [f"{base}/grant/{g['id']}" for g in await get_all_active_grants()]
+    body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">" + \
+        "".join(f"<url><loc>{_html(u)}</loc></url>" for u in urls) + "</urlset>"
+    return RawResponse(body, media_type="application/xml")
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots():
+    return f"User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: {PUBLIC_URL}/sitemap.xml\n"
+
+
 # ---------------------------------------------------------------------------
 # Пользователь, профиль, напоминания
 # ---------------------------------------------------------------------------
@@ -302,6 +361,8 @@ async def api_grants(
     deadline: Optional[Literal["open", "upcoming"]] = None,
     req: Optional[Literal[REQUIREMENTS]] = None,
     cursor: Optional[int] = Query(default=None, ge=1),
+    offset: int = Query(default=0, ge=0, le=5000),
+    sort: Literal[tuple(SORTS)] = "new",
     limit: int = Query(default=12, ge=1, le=50),
     uid: int = Depends(current_user),
 ):
@@ -310,25 +371,27 @@ async def api_grants(
     Следующая страница запрашивается по next_cursor (id последней записи), а не по смещению.
     """
     country = country.upper() if country else None
-    if cursor is None:
+    if cursor is None and offset == 0:
         await log_event(uid, "browse_catalog", {"region": category, "degree": degree})
 
     async def load():
         return await get_grants_page(category, degree, country=country, funding=funding, deadline=deadline,
-                                     req=req, limit=limit, cursor=cursor)
+                                     req=req, limit=limit, cursor=cursor, offset=offset, sort=sort)
 
-    items, total = await cached(("grants", category, degree, country, funding, deadline, req, cursor, limit),
+    items, total = await cached(("grants", category, degree, country, funding, deadline, req, cursor, offset, sort, limit),
                                 CACHE_TTL_PAGES, load)
     favs = await _favorite_ids(uid)
+    has_more = len(items) == limit and offset + len(items) < total
     return {"items": [_grant_public(g, g["id"] in favs) for g in items], "total": total, "limit": limit,
-            "next_cursor": items[-1]["id"] if len(items) == limit else None}
+            "next_cursor": items[-1]["id"] if has_more and sort == "new" else None,
+            "next_offset": offset + len(items) if has_more else None}
 
 
 @app.get("/api/meta")
 async def api_meta():
     """Справочники для фильтров каталога."""
     countries = await cached(("countries",), CACHE_TTL_REFERENCE, get_active_countries)
-    return {"countries": countries, "degrees": DEGREES, "funding": ["full", "partial"],
+    return {"countries": countries, "degrees": DEGREES, "funding": ["full", "partial"], "sorts": list(SORTS),
             "deadline": ["open", "upcoming"], "requirements": REQUIREMENTS}
 
 
@@ -650,6 +713,7 @@ class ReviewIn(BaseModel):
     approve: bool
     # при одобрении страну можно исправить: код ISO-2 или "" (несколько стран); None — оставить как есть
     country_code: Optional[str] = Field(default=None, max_length=2)
+    deadline_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class SynonymIn(BaseModel):
@@ -659,7 +723,7 @@ class SynonymIn(BaseModel):
 
 def _review_public(g: dict) -> dict:
     return {**_grant_public(g), "record_status": g.get("record_status"), "review_note": g.get("review_note"),
-            "first_seen": g.get("first_seen")}
+            "first_seen": g.get("first_seen"), "deadline_confirmed": bool(g.get("deadline_confirmed"))}
 
 
 @app.get("/api/admin/review")
@@ -674,7 +738,12 @@ async def api_admin_review_decide(grant_id: int, data: ReviewIn, _: bool = Depen
         country = normalize_country(data.country_code)
         if not country:
             raise HTTPException(400, "Код страны — две латинские буквы (ISO-2), например KZ или DE")
-    if not await review_grant(grant_id, data.approve, country, set_country):
+    if data.deadline_date:
+        try:
+            datetime.date.fromisoformat(data.deadline_date)
+        except ValueError:
+            raise HTTPException(400, "Дата дедлайна — в формате ГГГГ-ММ-ДД")
+    if not await review_grant(grant_id, data.approve, country, set_country, data.deadline_date):
         raise HTTPException(404, "Запись не найдена в очереди")
     cache_invalidate()
     return {"ok": True}
@@ -711,9 +780,15 @@ async def api_admin_login(_: bool = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Старт
 # ---------------------------------------------------------------------------
+
 async def _daily_cleanup_loop():
     """Очистка истёкших грантов и пересчёт статусов: при старте и затем ежедневно в 00:01 UTC."""
     while True:
+        try:
+            path = await backup_database()   # копия до удаления — на случай ошибки в датах
+            logging.info(f"Резервная копия базы: {path}")
+        except Exception as e:
+            logging.error(f"Ошибка резервной копии: {e}", exc_info=True)
         try:
             deleted = await cleanup_expired_grants()
             cache_invalidate()
@@ -721,6 +796,12 @@ async def _daily_cleanup_loop():
                 logging.info(f"Ежедневная очистка: удалено грантов с прошедшим дедлайном: {deleted}")
         except Exception as e:
             logging.error(f"Ошибка ежедневной очистки: {e}", exc_info=True)
+        if datetime.datetime.now(datetime.timezone.utc).weekday() == 0 and WEB_RUN_SCHEDULER:   # иначе ссылки проверяет бот
+            try:
+                await recheck_links()
+                cache_invalidate()
+            except Exception as e:
+                logging.error(f"Ошибка проверки ссылок: {e}", exc_info=True)
         now = datetime.datetime.now(datetime.timezone.utc)
         next_run = (now + datetime.timedelta(days=1)).replace(hour=0, minute=1, second=0, microsecond=0)
         await asyncio.sleep((next_run - now).total_seconds())

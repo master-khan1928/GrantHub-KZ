@@ -5,6 +5,8 @@ import html
 import json
 import os
 import re
+import shutil
+import sqlite3
 import aiosqlite
 
 from pathlib import Path
@@ -244,6 +246,8 @@ async def init_db():
             "ALTER TABLE grants ADD COLUMN application_start_date TEXT",  # когда открывается приём документов
             "ALTER TABLE grants ADD COLUMN is_ongoing INTEGER DEFAULT 0",  # приём круглый год — очистка не трогает
             "ALTER TABLE grants ADD COLUMN recurrence_period TEXT",  # yearly — вместо удаления дедлайн переносится на год
+            "ALTER TABLE grants ADD COLUMN deadline_confirmed INTEGER DEFAULT 0",  # дата найдена на странице гранта или подтверждена оператором
+            "ALTER TABLE grants ADD COLUMN link_failures INTEGER DEFAULT 0",  # сколько проверок подряд ссылка не открывается
         ]
         for sql in migrations:
             try:
@@ -386,6 +390,8 @@ async def init_db():
         )
         # Стартовые программы (госгранты, гранты вузов) объявляются каждый год
         await db.execute("UPDATE grants SET recurrence_period = 'yearly' WHERE source_id = 'seed' AND recurrence_period IS NULL")
+        # стартовые записи внесены вручную — их даты не требуют подтверждения страницей
+        await db.execute("UPDATE grants SET deadline_confirmed = 1 WHERE source_id = 'seed' AND COALESCE(deadline_confirmed, 0) = 0")
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_grants_source_external ON grants(source_id, external_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_grants_scope_active ON grants(is_domestic, record_status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_grants_destination_active ON grants(country_code, record_status)")
@@ -683,24 +689,32 @@ def _grant_filters(scope: str, degree: str = "all", country: str = None, funding
     return " AND ".join(where), params
 
 
+SORTS = {
+    "new": "id DESC",
+    "deadline": "(deadline_date IS NULL), deadline_date ASC, id DESC",          # ближайшие сроки первыми, без даты — в конце
+    "funding": "CASE funding WHEN 'full' THEN 0 WHEN 'partial' THEN 1 ELSE 2 END, id DESC",
+}
+
+
 async def get_grants_page(scope: str, degree: str = "all", *, country: str = None, funding: str = None,
                           deadline: str = None, req: str = None, limit: int = 12, cursor: int = None,
-                          offset: int = 0) -> tuple:
+                          offset: int = 0, sort: str = "new") -> tuple:
     """Страница каталога -> (записи, всего по фильтру).
 
-    cursor — id последней показанной записи (keyset): следующая страница не замедляется с глубиной.
-    offset оставлен для Telegram-бота, где страницы нумеруются смещением.
+    При сортировке по новизне cursor — id последней показанной записи (keyset): следующая страница
+    не замедляется с глубиной. Для других сортировок и для Telegram-бота страницы нумеруются смещением.
     """
     where, params = _grant_filters(scope, degree, country, funding, deadline, req)
+    order = SORTS.get(sort, SORTS["new"])
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(f"SELECT COUNT(*) FROM grants WHERE {where}", params) as cur:
             total = (await cur.fetchone())[0]
-        if cursor:
-            query = f"SELECT * FROM grants WHERE {where} AND id < ? ORDER BY id DESC LIMIT ?"
+        if cursor and sort == "new":
+            query = f"SELECT * FROM grants WHERE {where} AND id < ? ORDER BY {order} LIMIT ?"
             page_params = params + [cursor, limit]
         else:
-            query = f"SELECT * FROM grants WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?"
+            query = f"SELECT * FROM grants WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?"
             page_params = params + [limit if limit is not None else -1, offset]
         async with db.execute(query, page_params) as cur:
             return [dict(row) for row in await cur.fetchall()], total
@@ -890,8 +904,10 @@ async def cleanup_expired_grants() -> int:
 
     1. Ежегодные гранты (recurrence_period = 'yearly') с прошедшим дедлайном не удаляются:
        дедлайн и дата открытия переносятся на следующий год, статус — «скоро откроется».
-    2. Остальные гранты с прошедшим дедлайном удаляются насовсем (кроме бессрочных, is_ongoing = 1);
-       избранное, напоминания и подписки уходят каскадом.
+    2. Гранты с прошедшим и подтверждённым (deadline_confirmed = 1) дедлайном удаляются насовсем
+       (кроме бессрочных, is_ongoing = 1); избранное, напоминания и подписки уходят каскадом.
+       Если дата была только оценкой модели и не найдена на странице — запись не удаляется,
+       а уходит в очередь на проверку оператору.
     3. Статусы приёма пересчитываются по application_start_date.
     """
     today = datetime.date.today().isoformat()
@@ -919,7 +935,13 @@ async def cleanup_expired_grants() -> int:
             await db.execute("DELETE FROM reminders_sent WHERE grant_id = ?", (grant_id,))
             await db.execute("UPDATE open_alerts SET notified_at = NULL WHERE grant_id = ?", (grant_id,))
 
-        expired = "deadline_date IS NOT NULL AND deadline_date < ? AND COALESCE(is_ongoing, 0) = 0"
+        await db.execute(
+            "UPDATE grants SET record_status = 'flagged_review', is_active = 0, "
+            "review_note = 'Срок подачи (' || deadline_date || ') прошёл, но дата не найдена на странице гранта. "
+            "Укажите верный дедлайн и одобрите — или отклоните' "
+            "WHERE deadline_date < ? AND COALESCE(is_ongoing, 0) = 0 AND COALESCE(deadline_confirmed, 0) = 0 "
+            "AND record_status = 'active'", (today,))
+        expired = "deadline_date IS NOT NULL AND deadline_date < ? AND COALESCE(is_ongoing, 0) = 0 AND deadline_confirmed = 1"
         await db.execute(
             f"INSERT OR REPLACE INTO grant_tombstones (external_id, deadline_date, deleted_at) "
             f"SELECT external_id, deadline_date, ? FROM grants WHERE {expired} AND external_id IS NOT NULL", (now, today),
@@ -1003,17 +1025,17 @@ _UPSERT_SQL = """
     INSERT INTO grants (category, degree, name, coverage, requirements, deadline, deadline_date, link, is_active,
                         source, status, first_seen, last_seen, country_code, provider_country, source_id,
                         external_id, data_hash, record_status, review_note, funding, missed_scans,
-                        application_start_date, is_ongoing, recurrence_period)
+                        application_start_date, is_ongoing, recurrence_period, deadline_confirmed)
     VALUES (:category, :degree, :name, :coverage, :requirements, :deadline, :deadline_date, :link, :is_active,
             :source, :status, :now, :now, :country_code, :provider_country, :source_id,
             :external_id, :data_hash, :record_status, :review_note, :funding, 0,
-            :application_start_date, :is_ongoing, :recurrence_period)
+            :application_start_date, :is_ongoing, :recurrence_period, :deadline_confirmed)
     ON CONFLICT (source_id, external_id) DO UPDATE SET
         name = excluded.name, coverage = excluded.coverage, requirements = excluded.requirements,
         deadline = excluded.deadline, deadline_date = excluded.deadline_date, status = excluded.status,
         degree = excluded.degree, funding = excluded.funding, data_hash = excluded.data_hash,
         application_start_date = excluded.application_start_date, is_ongoing = excluded.is_ongoing,
-        recurrence_period = excluded.recurrence_period,
+        recurrence_period = excluded.recurrence_period, deadline_confirmed = excluded.deadline_confirmed,
         last_seen = excluded.last_seen, missed_scans = 0
 """
 
@@ -1044,7 +1066,7 @@ async def upsert_scanned_grant(db, g: dict, now: str, dup_id: int = None) -> tup
     same_link = normalize_link(row["link"]) == g["external_id"]
     if row["source_id"] == SOURCE_SCANNER and same_link and row["data_hash"] != g["data_hash"]:
         for field in ("name", "coverage", "requirements", "deadline", "deadline_date", "status", "degree", "funding",
-                      "data_hash", "application_start_date", "is_ongoing", "recurrence_period"):
+                      "data_hash", "application_start_date", "is_ongoing", "recurrence_period", "deadline_confirmed"):
             sets.append(f"{field} = ?")
             params.append(g[field])
         action = "updated"
@@ -1052,6 +1074,7 @@ async def upsert_scanned_grant(db, g: dict, now: str, dup_id: int = None) -> tup
     if row["record_status"] == "archived" and row["archived_reason"] == "sweep":
         sets += ["record_status = 'active'", "is_active = 1", "archived_reason = NULL"]
         action = "updated"
+    sets.append("link_failures = 0")   # страница только что открылась при проверке ссылки
     await db.execute(f"UPDATE grants SET {', '.join(sets)} WHERE id = ?", params + [row["id"]])
     return row["id"], action
 
@@ -1121,24 +1144,78 @@ async def get_review_queue(limit: int = 50) -> list:
             return [dict(r) for r in await cursor.fetchall()]
 
 
-async def review_grant(grant_id: int, approve: bool, country_code: str = None, set_country: bool = False) -> bool:
-    """Решение оператора. При одобрении можно исправить страну (set_country=True; None = несколько стран)."""
+async def review_grant(grant_id: int, approve: bool, country_code: str = None, set_country: bool = False,
+                       deadline_date: str = None) -> bool:
+    """Решение оператора. При одобрении можно исправить страну (set_country=True; None = несколько стран)
+    и дедлайн; одобренная дата считается подтверждённой."""
     async with aiosqlite.connect(DB_NAME) as db:
         if not approve:
             cursor = await db.execute(
                 "UPDATE grants SET record_status = 'archived', is_active = 0, archived_reason = 'manual' "
                 "WHERE id = ? AND record_status IN ('flagged_review', 'draft')", (grant_id,))
-        elif set_country:
-            cursor = await db.execute(
-                "UPDATE grants SET record_status = 'active', is_active = 1, archived_reason = NULL, review_note = NULL, "
-                "country_code = ?, category = ? WHERE id = ? AND record_status IN ('flagged_review', 'draft')",
-                (country_code, "kz" if country_code == "KZ" else "abroad", grant_id))
         else:
+            sets = ["record_status = 'active'", "is_active = 1", "archived_reason = NULL", "review_note = NULL",
+                    "deadline_confirmed = 1"]
+            params = []
+            if set_country:
+                sets += ["country_code = ?", "category = ?"]
+                params += [country_code, "kz" if country_code == "KZ" else "abroad"]
+            if deadline_date:
+                sets += ["deadline_date = ?", "deadline = ?"]
+                params += [deadline_date, deadline_date]
             cursor = await db.execute(
-                "UPDATE grants SET record_status = 'active', is_active = 1, archived_reason = NULL, review_note = NULL "
-                "WHERE id = ? AND record_status IN ('flagged_review', 'draft')", (grant_id,))
+                f"UPDATE grants SET {', '.join(sets)} WHERE id = ? AND record_status IN ('flagged_review', 'draft')",
+                params + [grant_id])
         await db.commit()
         return cursor.rowcount > 0
+
+
+# --- Проверка ссылок и резервные копии ---
+
+async def get_links_to_check() -> list:
+    """Активные гранты сканера: (id, link) — раз в неделю проверяем, что страницы живы."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, link FROM grants WHERE record_status = 'active' AND source_id = ?", (SOURCE_SCANNER,)
+        ) as cursor:
+            return [(r[0], r[1]) for r in await cursor.fetchall()]
+
+
+async def record_link_check(results: list, max_failures: int = 2) -> int:
+    """results — [(id, ok)]. Ссылка, не открывшаяся max_failures проверок подряд, уводит грант в архив."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.executemany("UPDATE grants SET link_failures = 0 WHERE id = ?", [(gid,) for gid, ok in results if ok])
+        await db.executemany("UPDATE grants SET link_failures = COALESCE(link_failures, 0) + 1 WHERE id = ?",
+                             [(gid,) for gid, ok in results if not ok])
+        cursor = await db.execute(
+            "UPDATE grants SET record_status = 'archived', is_active = 0, archived_reason = 'dead_link' "
+            "WHERE record_status = 'active' AND link_failures >= ?", (max_failures,))
+        await db.commit()
+        return cursor.rowcount
+
+
+BACKUP_DIR = DATA_DIR / "backups"
+BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "7"))
+
+
+def _backup_sync() -> Path:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    path = BACKUP_DIR / f"grants-{datetime.date.today().isoformat()}.db"
+    src, dst = sqlite3.connect(DB_NAME), sqlite3.connect(str(path))
+    try:
+        src.backup(dst)   # корректная копия даже во время работы бота и сайта
+    finally:
+        dst.close()
+        src.close()
+    for old in sorted(BACKUP_DIR.glob("grants-*.db"))[:-BACKUP_KEEP]:
+        old.unlink(missing_ok=True)
+    return path
+
+
+async def backup_database() -> Path:
+    """Копия базы в data/backups/grants-ГГГГ-ММ-ДД.db; хранится последние BACKUP_KEEP штук."""
+    import asyncio
+    return await asyncio.get_running_loop().run_in_executor(None, _backup_sync)
 
 
 async def get_synonyms() -> list:

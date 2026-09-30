@@ -70,7 +70,7 @@
 
   const state = {
     view: 'home', region: null, degree: null, cursor: null, shown: 0, total: 0, favIds: new Set(),
-    filters: { country: '', funding: '', deadline: '', req: '' }, countries: [], searchScope: 'all', alertIds: new Set(),
+    filters: { country: '', funding: '', deadline: '', req: '' }, sort: 'new', countries: [], searchScope: 'all', alertIds: new Set(),
     adminToken: localStorage.getItem('gh_admin') || '', scanTimer: null, profile: {}, compare: new Set(), grants: new Map(),
   };
 
@@ -218,7 +218,7 @@
     return `
     <article class="gcard" data-id="${g.id}" style="--i:${i}">
       <div class="g-head"><span>${esc(placeOf(g))} ${flagOf(g)}</span><span class="muted">·</span><span>${degreeLabel[g.degree] || g.degree}</span></div>
-      <div class="g-main"><h3 class="g-title">${esc(g.name)}</h3>${deadlineBlock(g)}</div>
+      <div class="g-main"><h3 class="g-title"><a href="/grant/${g.id}">${esc(g.name)}</a></h3>${deadlineBlock(g)}</div>
       <div class="g-tags">${statusTag(g)}${urgentTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}</div>
       <div class="g-meter"><span>${t('card.coverageLvl')}</span><i style="--w:${coverageLevel(g)}%"></i><span>${coverageLevel(g)}%</span></div>
       <div class="g-row">${icon.money}<div><b>${t('card.coverage')}:</b> ${esc(g.coverage)}</div></div>
@@ -330,13 +330,14 @@
     fillSelect($('#fFunding'), t('filter.funding'), ['full', 'partial'].map(v => [v, t('funding.' + v)]), f.funding);
     fillSelect($('#fDeadline'), t('filter.deadline'), ['open', 'upcoming'].map(v => [v, t('deadline.' + v)]), f.deadline);
     fillSelect($('#fReq'), t('filter.req'), [['ielts', 'IELTS'], ['toefl', 'TOEFL'], ['sat', 'SAT'], ['gpa', 'GPA'], ['ent', t('req.ent')]], f.req);
+    fillSelect($('#fSort'), t('sort.new'), [['deadline', t('sort.deadline')], ['funding', t('sort.funding')]], state.sort === 'new' ? '' : state.sort);
     $('#fReset').textContent = t('filter.reset');
     $('#fReset').hidden = !Object.values(f).some(Boolean);
   };
   $('#scopeSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-scope]'); if (!b || b.dataset.scope === state.region) return; state.region = b.dataset.scope; loadCatalog(true); });
   $('#filters').addEventListener('change', (e) => {
     const key = e.target.dataset.filter; if (!key) return;
-    if (key === 'degree') state.degree = e.target.value || 'all'; else state.filters[key] = e.target.value;
+    if (key === 'degree') state.degree = e.target.value || 'all'; else if (key === 'sort') state.sort = e.target.value || 'new'; else state.filters[key] = e.target.value;
     loadCatalog(true);
   });
   $('#fReset').addEventListener('click', () => { state.filters = { country: '', funding: '', deadline: '', req: '' }; loadCatalog(true); });
@@ -347,14 +348,15 @@
     try {
       const q = new URLSearchParams({ category: state.region, degree: state.degree, limit: 12 });
       Object.entries(state.filters).forEach(([k, v]) => { if (v) q.set(k, v); });
-      if (state.cursor) q.set('cursor', state.cursor);
+      if (state.sort !== 'new') q.set('sort', state.sort);
+      if (state.cursor) q.set('cursor', state.cursor); else if (state.shown) q.set('offset', state.shown);
       const d = await api(`/api/grants?${q}`);
       state.total = d.total;
       $('#crumbs').insertAdjacentHTML('beforeend', `<span>${t('total')}: ${d.total}</span>`);
       if (reset && !d.items.length) { grid.innerHTML = `<div class="empty"><div class="empty-icon">🔎</div><p>${t('catalog.empty')}</p></div>`; return; }
       renderGrid(grid, d.items, !reset);
       state.shown += d.items.length; state.cursor = d.next_cursor;
-      more.hidden = !d.next_cursor || state.shown >= d.total;
+      more.hidden = d.next_offset == null;
       more.textContent = `${t('loadmore')} (${d.total - state.shown})`;
     } catch (err) { grid.innerHTML = ''; toast(err.message, 'err'); }
   };
@@ -538,15 +540,15 @@
   const renderReview = (r) => {
     $('#reviewList').innerHTML = r.items.length ? r.items.map(g => `
       <div class="review-item" data-review="${g.id}">
-        <div><b>#${g.id} · ${esc(g.name)}</b><div class="muted">${esc(g.source || '—')} · <a href="${/^https?:\/\//i.test(g.link) ? esc(g.link) : '#'}" target="_blank" rel="noopener nofollow">${esc(g.link)}</a></div><div>⚠️ ${esc(g.review_note || 'новая запись')}</div></div>
-        <div class="inline-form"><input type="text" maxlength="2" value="${esc(g.country_code || '')}" placeholder="ISO" aria-label="Код страны"><button class="btn btn-primary btn-sm" data-approve="1">Одобрить</button><button class="btn btn-danger btn-sm" data-approve="0">Отклонить</button></div>
+        <div><b>#${g.id} · ${esc(g.name)}</b><div class="muted">${esc(g.source || '—')} · <a href="${/^https?:\/\//i.test(g.link) ? esc(g.link) : '#'}" target="_blank" rel="noopener nofollow">${esc(g.link)}</a></div><div>⚠️ ${esc(g.review_note || 'новая запись')}</div><div class="muted">Дедлайн: ${esc(g.deadline_date || '—')}${g.deadline_confirmed ? ' ✓' : ' (не подтверждён)'} · ${esc(g.deadline)}</div></div>
+        <div class="inline-form"><input type="text" maxlength="2" value="${esc(g.country_code || '')}" placeholder="ISO" aria-label="Код страны"><input type="date" class="rv-date" value="${esc(g.deadline_date || '')}" aria-label="Дедлайн"><button class="btn btn-primary btn-sm" data-approve="1">Одобрить</button><button class="btn btn-danger btn-sm" data-approve="0">Отклонить</button></div>
       </div>`).join('') : 'Очередь пуста — все записи прошли проверку автоматически.';
   };
   $('#reviewList').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-approve]'); if (!b) return;
     const item = b.closest('[data-review]'), approve = b.dataset.approve === '1';
     try {
-      await api(`/api/admin/review/${item.dataset.review}`, { method: 'POST', body: { approve, country_code: approve ? item.querySelector('input').value.trim() : null } });
+      await api(`/api/admin/review/${item.dataset.review}`, { method: 'POST', body: { approve, country_code: approve ? item.querySelector('input').value.trim() : null, deadline_date: approve ? (item.querySelector('.rv-date').value || null) : null } });
       toast(approve ? 'Запись опубликована' : 'Запись отклонена', 'ok'); item.remove();
       if (!$('#reviewList').children.length) renderReview({ items: [] });
     } catch (err) { toast(err.message, 'err'); }

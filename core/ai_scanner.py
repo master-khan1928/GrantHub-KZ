@@ -22,9 +22,11 @@ except ImportError:  # пакет google-genai не установлен — р�
     types = None
 from core.database import (
     DB_NAME, DEGREES, SOURCE_SCANNER, clean_text, get_all_grants_light, find_duplicate_grant, get_user_profile,
-    drop_tombstone, get_tombstones, grant_hash, guess_funding, link_domain, log_scan_run, normalize_link,
-    record_monitor_result, status_by_dates, sweep_stale_grants, upsert_scanned_grant,
+    drop_tombstone, get_links_to_check, get_tombstones, grant_hash, guess_funding, link_domain, log_scan_run,
+    normalize_link, record_link_check, record_monitor_result, status_by_dates, sweep_stale_grants,
+    upsert_scanned_grant,
 )
+from core.dates import date_in_text, page_text
 from core.geo import PROGRAM_COUNTRY, resolve_location
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -737,29 +739,50 @@ def _is_public_host(url: str) -> bool:
         return False
 
 
-async def is_link_valid(session: aiohttp.ClientSession, url: str) -> bool:
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; GrantBot/1.0)"}
+PAGE_MAX_BYTES = 400_000   # сколько читаем со страницы гранта для подтверждения дедлайна
+
+
+async def fetch_page(session: aiohttp.ClientSession, url: str) -> tuple:
+    """-> (страница открывается, текст страницы). Текст пустой, если это не HTML или страница не открылась."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; GrantBot/1.0)", "Accept-Language": "en,ru;q=0.8,kk;q=0.7"}
     timeout = aiohttp.ClientTimeout(total=LINK_CHECK_TIMEOUT)
     if not url.lower().startswith(("http://", "https://")):
-        return False
+        return False, ""
     if not await asyncio.get_running_loop().run_in_executor(None, _is_public_host, url):
-        return False
-    try:
-        async with session.head(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
-            if resp.status < 400:
-                return True
-            # часть сайтов не любит HEAD (405/403) — проверим GET ниже
-    except Exception:
-        pass
+        return False, ""
     try:
         async with session.get(url, headers=headers, timeout=timeout, allow_redirects=True) as resp:
-            if resp.status < 400:
-                return True
-            logging.warning(f"Ссылка отвечает {resp.status}, пропускаю грант: {url}")
-            return False
+            if resp.status >= 400:
+                logging.warning(f"Ссылка отвечает {resp.status}: {url}")
+                return False, ""
+            if "html" not in (resp.headers.get("Content-Type") or "").lower():
+                return True, ""
+            raw = await resp.content.read(PAGE_MAX_BYTES)
+            return True, page_text(raw.decode(resp.charset or "utf-8", "ignore"))
     except Exception as e:
-        logging.warning(f"Ссылка недоступна, пропускаю грант: {url} ({e})")
-        return False
+        logging.warning(f"Ссылка недоступна: {url} ({e})")
+        return False, ""
+
+
+async def is_link_valid(session: aiohttp.ClientSession, url: str) -> bool:
+    return (await fetch_page(session, url))[0]
+
+
+async def recheck_links() -> dict:
+    """Еженедельно: открывает страницы всех активных грантов сканера; мёртвые ссылки уводят грант в архив."""
+    links = await get_links_to_check()
+    semaphore = asyncio.Semaphore(LINK_CHECK_CONCURRENCY)
+
+    async def _check(session, grant_id, url):
+        async with semaphore:
+            return grant_id, await is_link_valid(session, url)
+
+    async with aiohttp.ClientSession() as session:
+        results = await asyncio.gather(*[_check(session, gid, url) for gid, url in links])
+    archived = await record_link_check(list(results))
+    summary = {"checked": len(results), "failed": sum(1 for _, ok in results if not ok), "archived": archived}
+    logging.info(f"Проверка ссылок: проверено {summary['checked']}, не открылось {summary['failed']}, в архив {archived}.")
+    return summary
 
 
 def validate_iso_date(value) -> Optional[str]:
@@ -877,7 +900,10 @@ async def scan_and_save_grants() -> list:
 
     async def _check(session, g):
         async with semaphore:
-            return g, await is_link_valid(session, g["link"])
+            ok, text = await fetch_page(session, g["link"])
+            # дата дедлайна подтверждена, только если она написана на самой странице гранта
+            g["deadline_confirmed"] = ok and date_in_text(validate_deadline_date(g.get("deadline_date")), text)
+            return g, ok
 
     async with aiohttp.ClientSession() as session:
         checked = await asyncio.gather(*[_check(session, g) for g in candidates])
@@ -981,6 +1007,7 @@ def _prepare_record(g: dict) -> dict:
         "status": status_by_dates(start_date, deadline_date, status),   # даты надёжнее слов модели
         "application_start_date": start_date, "is_ongoing": is_ongoing,
         "recurrence_period": "yearly" if yearly and not is_ongoing else None,
+        "deadline_confirmed": 1 if deadline_date and g.get("deadline_confirmed") else 0,
         "coverage": coverage,
         "requirements": clean_text(g.get("requirements")) or "Уточняйте на сайте",
         "deadline": clean_text(g.get("deadline"), 200) or "Уточняется",
