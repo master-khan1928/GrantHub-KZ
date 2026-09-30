@@ -13,7 +13,7 @@
     '#nav a[data-nav="home"]': 'nav.homeapp', '#nav a[data-nav="catalog"]': 'nav.catalog', '#nav a[data-nav="search"]': 'nav.search',
     '#nav a[data-nav="chat"]': 'nav.chat', '#nav a[data-nav="profile"]': 'nav.profile', '#adminNav': 'nav.admin',
     '.topbar-actions .pill--white': 'pill.ask', '#loginBtn': 'login',
-    '[data-view="catalog"] .eyebrow': 'catalog.step1', '[data-view="catalog"] .vlead': 'catalog.lead',
+    '[data-view="catalog"] .eyebrow': 'catalog.results', '[data-view="catalog"] .vlead': 'catalog.lead',
     '[data-region="kz"] b': 'choice.kz', '[data-region="kz"] > span:nth-of-type(2)': 'choice.kz.desc',
     '[data-region="abroad"] b': 'choice.abroad', '[data-region="abroad"] > span:nth-of-type(2)': 'choice.abroad.desc',
     '[data-degree="bachelor"] b': 'choice.bachelor', '[data-degree="bachelor"] > span:nth-of-type(2)': 'choice.bachelor.desc',
@@ -29,7 +29,7 @@
     '#authModal .eyebrow': 'auth.eyebrow', '#authSub': 'auth.sub',
   };
   const HTML = {
-    '[data-view="catalog"] .vtitle': 'catalog.title', '[data-view="search"] .vtitle': 'search.title', '[data-view="favorites"] .vtitle': 'fav.title',
+    '[data-view="catalog"] .vtitle': 'catalog.titleAll', '[data-view="search"] .vtitle': 'search.title', '[data-view="favorites"] .vtitle': 'fav.title',
     '[data-view="chat"] .vtitle': 'chat.title', '[data-view="profile"] .vtitle': 'profile.title', '[data-view="admin"] .vtitle': 'admin.title',
     '.bullets li:nth-child(1)': 'profile.b1', '.bullets li:nth-child(2)': 'profile.b2', '.bullets li:nth-child(3)': 'profile.b3', '.footer > span:first-child': 'foot.words',
   };
@@ -69,7 +69,7 @@
   };
 
   const state = {
-    view: 'home', region: null, degree: null, cursor: null, shown: 0, total: 0, favIds: new Set(),
+    view: 'home', region: 'all', degree: 'all', cursor: null, shown: 0, total: 0, favIds: new Set(),
     filters: { country: '', funding: '', deadline: '', req: '' }, sort: 'new', countries: [], searchScope: 'all', alertIds: new Set(),
     adminToken: localStorage.getItem('gh_admin') || '', scanTimer: null, profile: {}, compare: new Set(), grants: new Map(),
   };
@@ -137,6 +137,7 @@
 
   const onEnter = (name) => {
     if (name === 'home') loadHome();
+    if (name === 'catalog') loadCatalog(true);
     if (name === 'favorites') loadFavorites();
     if (name === 'profile') fillProfile();
     if (name === 'search') setTimeout(() => $('#searchInput').focus(), 300);
@@ -202,13 +203,11 @@
   const flagEmoji = (code) => /^[A-Za-z]{2}$/.test(code || '') ? code.toUpperCase().replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0))) : '';
   const flagOf = (g) => `<span class="flag">${flagEmoji(g.country_code) || '🌍'}</span>`;
   const placeOf = (g) => g.source || countryName(g.country_code) || (g.category === 'kz' ? t('region.kz') : t('region.abroad'));
-  // Уровень покрытия (0–100) по тексту
-  const coverageLevel = (g) => { const c = (g.coverage || '').toLowerCase(); if (/полн|full|100%|fully|толық/.test(c)) return 100; if (/стипенд|stipend|scholarship|шәкіртақ/.test(c) && /обуч|tuition|оқу/.test(c)) return 85; if (/стипенд|stipend|проживан|housing|перел|travel/.test(c)) return 70; if (/частич|partial|скидк|discount|жеңілдік/.test(c)) return 45; return 55; };
   const plural = (n) => { if (LANG !== 'ru') return n === 1 ? t('card.day1') : t('card.days'); const m10 = n % 10, m100 = n % 100; if (m10 === 1 && m100 !== 11) return t('card.day1'); if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return t('card.days2'); return t('card.days'); };
   const deadlineBlock = (g) => {
     const d = g.days_left;
     if (g.is_ongoing) return `<div class="g-dl"><b class="tbd">${t('card.ongoing')}</b><span>${esc(g.deadline)}</span></div>`;
-    if (d === null || d === undefined) return `<div class="g-dl"><b class="tbd">${t('card.tbd')}</b><span>${esc(g.deadline)}</span></div>`;
+    if (d === null || d === undefined) return `<div class="g-dl"><b class="tbd">${g.recurrence_period === 'yearly' ? t('card.yearly') : t('card.tbd')}</b><span>${esc(g.deadline)}</span></div>`;
     if (d < 0) return `<div class="g-dl"><b class="tbd">${t('card.expired')}</b><span>${esc(g.deadline_date)}</span></div>`;
     const cls = d <= 7 ? 'hot' : d <= 30 ? 'soon' : '';
     return `<div class="g-dl"><b class="${cls}">${d === 0 ? t('card.today') : d}</b><span>${d === 0 ? esc(g.deadline_date) : plural(d) + ' · ' + esc(g.deadline_date)}</span></div>`;
@@ -217,18 +216,17 @@
     const inCmp = state.compare.has(g.id);
     return `
     <article class="gcard" data-id="${g.id}" style="--i:${i}">
-      <div class="g-head"><span>${esc(placeOf(g))} ${flagOf(g)}</span><span class="muted">·</span><span>${degreeLabel[g.degree] || g.degree}</span></div>
+      <div class="g-head"><span class="g-src" title="${esc(placeOf(g))}">${esc(placeOf(g))}</span>${flagOf(g)}</div>
       <div class="g-main"><h3 class="g-title"><a href="/grant/${g.id}">${esc(g.name)}</a></h3>${deadlineBlock(g)}</div>
-      <div class="g-tags">${statusTag(g)}${urgentTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}</div>
-      <div class="g-meter"><span>${t('card.coverageLvl')}</span><i style="--w:${coverageLevel(g)}%"></i><span>${coverageLevel(g)}%</span></div>
+      <div class="g-tags"><span class="tag">${degreeLabel[g.degree] || g.degree}</span>${statusTag(g)}${urgentTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}</div>
       <div class="g-row">${icon.money}<div><b>${t('card.coverage')}:</b> ${esc(g.coverage)}</div></div>
       <div class="g-row">${icon.list}<div><b>${t('card.requirements')}:</b> ${esc(g.requirements)}</div></div>
       <div class="g-foot">
         <a class="g-apply" href="${/^https?:\/\//i.test(g.link) ? esc(g.link) : '#'}" target="_blank" rel="noopener nofollow">${t('card.apply')} ${icon.ext}</a>
         <div class="g-actions">
           ${g.status === 'upcoming' ? `<button class="fav bell ${state.alertIds.has(g.id) ? 'on' : ''}" data-bell="${g.id}" aria-label="${t('bell.title')}" title="${t('bell.title')}">${icon.bell}</button>` : ''}
-          <button class="cmp-check ${inCmp ? 'on' : ''}" data-cmp="${g.id}" title="${t('card.compare')}" aria-label="${t('card.compare')}"><svg viewBox="0 0 24 24"><path d="M4 6h7v12H4zM13 6h7v12h-7z"/></svg></button>
-          <button class="fav ${g.is_favorite ? 'on' : ''}" data-fav="${g.id}" aria-label="${t('fav.btn')}" title="${t('fav.btn')}">${icon.star}</button>
+          <button class="cmp-check ${inCmp ? 'on' : ''}" data-cmp="${g.id}" title="${t('card.compare')}" aria-label="${t('card.compare')}"><svg viewBox="0 0 24 24"><path d="M4 6h7v12H4zM13 6h7v12h-7z"/></svg><em>${t('card.compare')}</em></button>
+          <button class="fav ${g.is_favorite ? 'on' : ''}" data-fav="${g.id}" aria-label="${t('fav.btn')}" title="${t('fav.btn')}">${icon.star}<em>${t('card.save')}</em></button>
         </div>
       </div>
     </article>`;
@@ -277,14 +275,11 @@
   });
 
   // ---------- Catalog ----------
-  const setStep = (name) => {
-    $$('.step').forEach(s => s.classList.toggle('active', s.dataset.step === name));
-    $('#catalogSub').textContent = { region: t('catalog.step1'), degree: t('catalog.step2'), results: t('catalog.results') }[name];
-    $('#catalogTitle').innerHTML = { region: t('catalog.title'), degree: t('catalog.title2'), results: { kz: t('catalog.titleKz'), abroad: t('catalog.titleAbroad') }[state.region] || t('catalog.titleAll') }[name];
+  // Каталог — один экран: фильтры сверху, сетка сразу под ними. Заголовок следует за выбранным разделом.
+  const setStep = () => {
+    $('#catalogSub').textContent = t('catalog.results');
+    $('#catalogTitle').innerHTML = { kz: t('catalog.titleKz'), abroad: t('catalog.titleAbroad') }[state.region] || t('catalog.titleAll');
   };
-  $$('[data-region]').forEach(b => b.addEventListener('click', () => { state.region = b.dataset.region; setStep('degree'); }));
-  $$('[data-degree]').forEach(b => b.addEventListener('click', () => { state.degree = b.dataset.degree; loadCatalog(true); }));
-  $$('[data-back]').forEach(b => b.addEventListener('click', () => setStep(b.dataset.back)));
   // Фильтры каталога: раздел (Казахстан | Зарубеж | Все) и уточнения. Всё уходит в API параметрами.
   const fillSelect = (el, label, options, value) => {
     el.innerHTML = `<option value="">${esc(label)}</option>` + options.map(([v, text]) => `<option value="${esc(v)}">${esc(text)}</option>`).join('');
@@ -343,7 +338,7 @@
   $('#fReset').addEventListener('click', () => { state.filters = { country: '', funding: '', deadline: '', req: '' }; loadCatalog(true); });
   const loadCatalog = async (reset) => {
     const grid = $('#catalogGrid'), more = $('#loadMore');
-    if (reset) { state.cursor = null; state.shown = 0; setStep('results'); syncFilters(); skeletons(grid); more.hidden = true; }
+    if (reset) { state.cursor = null; state.shown = 0; setStep(); syncFilters(); skeletons(grid); more.hidden = true; }
     $('#crumbs').innerHTML = `<span>${state.region === 'kz' ? '🇰🇿 ' : '🌍 '}${scopeLabel[state.region]}</span><span>${degreeLabel[state.degree]}</span>`;
     try {
       const q = new URLSearchParams({ category: state.region, degree: state.degree, limit: 12 });
@@ -353,7 +348,12 @@
       const d = await api(`/api/grants?${q}`);
       state.total = d.total;
       $('#crumbs').insertAdjacentHTML('beforeend', `<span>${t('total')}: ${d.total}</span>`);
-      if (reset && !d.items.length) { grid.innerHTML = `<div class="empty"><div class="empty-icon">🔎</div><p>${t('catalog.empty')}</p></div>`; return; }
+      if (reset && !d.items.length) {
+        const filtered = Object.values(state.filters).some(Boolean) || state.degree !== 'all';
+        grid.innerHTML = `<div class="empty"><div class="empty-icon">🔎</div><p>${filtered ? t('catalog.emptyFiltered') : t('catalog.empty')}</p>${filtered ? `<button class="btn btn-ghost btn-sm" id="emptyReset">${t('filter.reset')}</button>` : ''}</div>`;
+        $('#emptyReset')?.addEventListener('click', () => { state.filters = { country: '', funding: '', deadline: '', req: '' }; state.degree = 'all'; loadCatalog(true); });
+        return;
+      }
       renderGrid(grid, d.items, !reset);
       state.shown += d.items.length; state.cursor = d.next_cursor;
       more.hidden = d.next_offset == null;
@@ -685,7 +685,7 @@
       row(t('cmp.country'), gs.map(g => esc(countryName(g.country_code) || (g.category === 'kz' ? t('region.kz') : t('country.multi'))))),
       row(t('cmp.level'), gs.map(g => degreeLabel[g.degree] || g.degree)),
       row(t('card.deadline'), gs.map(g => `${g.days_left != null && g.days_left >= 0 ? `<b>${g.days_left === 0 ? t('card.today') : g.days_left + ' ' + plural(g.days_left)}</b> · ` : ''}${esc(g.deadline)}`)),
-      row(t('card.coverageLvl'), gs.map(g => `<div class="g-meter"><i style="--w:${coverageLevel(g)}%"></i><span>${coverageLevel(g)}%</span></div>`)),
+      row(t('filter.funding'), gs.map(g => g.funding === 'full' || g.funding === 'partial' ? t('funding.' + g.funding) : '—')),
       row(t('card.coverage'), gs.map(g => esc(g.coverage))),
       row(t('card.requirements'), gs.map(g => esc(g.requirements))),
       row(t('cmp.status'), gs.map(g => g.status === 'open' ? t('tag.open') : g.status === 'upcoming' ? t('tag.upcoming') : '—')),

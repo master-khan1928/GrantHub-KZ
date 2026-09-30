@@ -2,7 +2,7 @@
 :root {
   --ink: #050505; --bg: #050505; --fg: #ffffff;
   --card: rgba(255, 255, 255, 0.05); --card-solid: #0d0d0f; --card-fg: #ffffff;
-  --muted: rgba(255, 255, 255, 0.07); --muted-fg: rgba(255, 255, 255, 0.55); --faint: rgba(255, 255, 255, 0.35);
+  --muted: rgba(255, 255, 255, 0.07); --muted-fg: rgba(255, 255, 255, 0.68); --faint: rgba(255, 255, 255, 0.42);
   --border: rgba(255, 255, 255, 0.10); --border-strong: rgba(255, 255, 255, 0.22);
   --online: #3ddc84; --accent: #f5b301; --brand: #3ddc84; --danger: #ef4444;
   --btn-bg: #ffffff; --btn-fg: #050505;
@@ -596,3 +596,18 @@ html::-webkit-scrollbar { display: none; width: 0; }
 .g-title a { color: inherit; text-decoration: none; }
 .g-title a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .review-item .inline-form input.rv-date { flex: 0 0 150px; width: 150px; text-transform: none; }
+
+/* ---------- Компактные шапки разделов: картинка и огромный заголовок только на главной ---------- */
+.view:not(.view--home) .view-art { display: none; }
+.view:not(.view--home) .vhead { padding: 6px 0 22px; }
+.view:not(.view--home) .vtitle { font-size: clamp(1.9rem, 3.4vw, 2.7rem); }
+.view:not(.view--home) .vlead { margin-top: 10px; font-size: .95rem; }
+.view[data-view="catalog"] .filters { margin-top: 4px; }
+/* ---------- Карточка: источник в одну строку, уровень — тегом ---------- */
+.g-head { min-width: 0; }
+.g-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-actions .fav em, .g-actions .cmp-check em { display: none; }
+.g-actions .fav, .g-actions .cmp-check { position: relative; }
+.g-actions button em { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); padding: 4px 9px; border-radius: var(--pill); background: #fff; color: var(--ink); font-size: 11px; font-style: normal; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .15s ease; z-index: 3; }
+@media (hover: hover) { .g-actions button:hover em, .g-actions button:focus-visible em { display: block; opacity: 1; } }
+:root[data-theme="light"] .g-actions button em { background: #0a0a0a; color: #fff; }
