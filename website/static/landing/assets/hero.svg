@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 700" width="1600" height="700">
+  <!-- Placeholder hero object: glossy light-gray graduation cap, side 3/4 view. Replace with hero.png -->
+  <defs>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4f4f5"/><stop offset=".45" stop-color="#c9c9cf"/><stop offset="1" stop-color="#7a7a82"/>
+    </linearGradient>
+    <linearGradient id="side" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9a9aa2"/><stop offset="1" stop-color="#3a3a40"/>
+    </linearGradient>
+    <linearGradient id="band" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5c5c63"/><stop offset="1" stop-color="#1f1f23"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="shadow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tassel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd257"/><stop offset="1" stop-color="#f5b301"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ground contact shadow -->
+  <ellipse cx="820" cy="600" rx="560" ry="46" fill="url(#shadow)"/>
+
+  <!-- cap body (cylinder) -->
+  <path d="M470 400 q350 90 700 0 v120 q-350 90 -700 0z" fill="url(#side)"/>
+  <path d="M470 520 q350 90 700 0 v18 q-350 90 -700 0z" fill="url(#band)"/>
+  <ellipse cx="820" cy="400" rx="350" ry="52" fill="#b9b9c0"/>
+
+  <!-- mortarboard (diamond, perspective) -->
+  <polygon points="200,330 820,120 1440,330 820,470" fill="url(#top)"/>
+  <polygon points="200,330 820,470 820,500 200,360" fill="#8a8a92"/>
+  <polygon points="1440,330 820,470 820,500 1440,360" fill="#5b5b63"/>
+  <!-- edge highlight -->
+  <polyline points="200,330 820,120 1440,330" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="3"/>
+  <!-- gloss sweep -->
+  <polygon points="380,290 820,150 1000,210 560,350" fill="url(#gloss)"/>
+
+  <!-- button on top -->
+  <ellipse cx="820" cy="296" rx="26" ry="11" fill="#3a3a40"/>
+  <ellipse cx="820" cy="290" rx="26" ry="11" fill="#e4e4e8"/>
+
+  <!-- tassel (accent) -->
+  <path d="M820 292 q120 40 190 120 v80" fill="none" stroke="url(#tassel)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M1000 490 q10 60 -10 92 h20 q-20 -32 -10 -92z" fill="url(#tassel)"/>
+  <circle cx="1010" cy="492" r="11" fill="#ffe27a"/>
+</svg>

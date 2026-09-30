@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GrantHub — гранты на учёбу по всему миру</title>
+<meta name="description" content="ИИ-агент, который дважды в день сканирует 150+ университетов и 70 международных конкурсов и находит гранты и стипендии для тебя.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: { extend: {
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+      colors: { ink: '#050505', online: '#3ddc84', accent: '#f5b301' },
+      letterSpacing: { tightest: '-0.03em', wide2: '0.15em' },
+    } },
+  };
+</script>
+<link rel="stylesheet" href="/static/landing/landing.css?v=7">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
+</head>
+<body class="bg-ink text-white font-sans antialiased">
+
+<!-- Blurred, darkened copy of the screen behind the framed "screen" (mockup effect) -->
+<div class="mockup-bg" aria-hidden="true">
+  <div class="mockup-bg__inner" id="mockupBg"></div>
+</div>
+
+<!-- Intro overlay: page starts blurred & dark, then de-blurs -->
+<div class="intro" id="intro" aria-hidden="true"></div>
+
+<div class="stage">
+  <div class="screen" id="screen">
+    <div class="screen__vignette" aria-hidden="true"></div>
+    <div class="screen__glow" aria-hidden="true"></div>
+
+    <!-- ================= NAVBAR ================= -->
+    <header class="nav" id="nav">
+      <a href="#" class="nav__brand" data-t="brandLink" aria-label="GrantHub">
+        <span class="nav__logo" aria-hidden="true"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9b9c2"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lgl)"/><path d="M22.2 12.3a7.2 7.2 0 1 0 1.1 6.3H17.5" fill="none" stroke="#050505" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="9.5" r="2" fill="#3ddc84"/></svg></span>
+        <span class="nav__brand-text"><b data-t="brandTop">GrantHub</b><i data-t="brandBottom">Kazakhstan</i></span>
+      </a>
+
+      <nav class="nav__links" id="navLinks" aria-label="Основное меню"></nav>
+
+      <div class="nav__right">
+        <span class="pill pill--dark"><span class="dot-online" aria-hidden="true"></span><span data-t="concierge">ИИ онлайн 24/7</span></span>
+        <span id="langBox"></span>
+        <a class="pill pill--white" id="navCta" data-t="navCta" href="/app#chat">Спросить ИИ</a>
+        <button class="burger" id="burger" aria-label="Меню" aria-expanded="false"><span></span><span></span></button>
+      </div>
+    </header>
+
+    <!-- Mobile menu -->
+    <div class="mobile-menu" id="mobileMenu" hidden></div>
+
+    <!-- ================= HERO ================= -->
+    <main class="hero">
+      <p class="hero__eyebrow" id="eyebrow" data-t="eyebrow">ИИ ищет гранты, пока ты спишь</p>
+
+      <h1 class="hero__title" id="title">
+        <span class="hero__line"><span data-t="titleLine1">Гранты на учёбу</span></span>
+        <span class="hero__line"><span data-t="titleLine2">по всему миру</span></span>
+      </h1>
+
+      <!-- Hero object (replace /static/landing/assets/hero.png with your own transparent PNG) -->
+      <div class="hero__object" id="heroObject">
+        <div class="dust" id="dust" aria-hidden="true"></div>
+        <img id="heroImg" class="hero__img" src="/static/landing/assets/hero.svg" alt="Академическая шапочка выпускника — символ гранта" loading="eager" decoding="async" width="1600" height="700">
+        <div class="hero__reflection" id="reflection" aria-hidden="true">
+          <img class="hero__img" src="/static/landing/assets/hero.svg" alt="" aria-hidden="true" loading="lazy" decoding="async" width="1600" height="700">
+        </div>
+      </div>
+
+      <!-- Glass cards -->
+      <aside class="cards" id="cards" aria-label="Ключевые цифры"></aside>
+      <p class="hero__note" id="note" data-t="note">Для тех, кто не просто поступает, а выбирает лучшее.</p>
+
+      <!-- CTA -->
+      <a class="cta" id="cta" data-t="cta" href="/app#catalog">Найти свой грант</a>
+    </main>
+
+    <!-- ================= CONTACT SLIDE ================= -->
+    <div class="slide" id="contactSlide" hidden role="dialog" aria-modal="true" aria-labelledby="contactTitle">
+      <div class="slide__panel">
+        <button class="slide__close" id="contactClose" aria-label="Закрыть"><span></span><span></span></button>
+        <span class="chip-ol"><span class="dot-online" aria-hidden="true"></span>Отвечаем в течение дня</span>
+        <h2 class="slide__title" id="contactTitle">Свяжись с нами</h2>
+        <p class="slide__text" id="contactText"></p>
+        <a class="slide__email" id="contactEmail" href="#"></a>
+        <div class="slide__actions">
+          <button class="pill pill--white" id="copyEmail">Скопировать почту</button>
+          <a class="pill pill--dark" id="contactTg" href="#" target="_blank" rel="noopener">Telegram-бот</a>
+        </div>
+        <ul class="slide__meta"><li>Казахстан</li><li>GrantHub Kazakhstan</li></ul>
+      </div>
+    </div>
+
+    <!-- ================= FOOTER ROW ================= -->
+    <footer class="foot" id="foot">
+      <ul class="foot__words" id="footWords"></ul>
+      <a href="#" class="foot__brand" data-t="footBrand">GrantHub Kazakhstan</a>
+    </footer>
+  </div>
+</div>
+
+<!-- ================= BELOW THE FOLD: stats, features, how it works, CTA ================= -->
+<section class="below" id="info">
+  <div class="wrap">
+    <div class="live rv" id="live">
+      <div class="live__head"><span class="live__dot"></span><b id="liveTitle">Только что найдено</b><span class="live__scan" id="liveScan"></span></div>
+      <div class="live__track"><div class="live__marquee" id="liveMarquee"></div></div>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="stats" id="stats">
+      <div class="stat-card rv"><span class="stat-label">Активных программ</span><b class="stat-num" data-count="active_total">0</b></div>
+      <div class="stat-card rv"><span class="stat-label">Приём открыт сейчас</span><b class="stat-num stat-num--green" data-count="open_now">0</b></div>
+      <div class="stat-card rv"><span class="stat-label">Университетов под наблюдением</span><b class="stat-num" data-count="universities">0</b></div>
+      <div class="stat-card rv"><span class="stat-label">Международных конкурсов</span><b class="stat-num" data-count="programs">0</b></div>
+    </div>
+    <p class="stats-foot rv" id="statsFoot">Последняя проверка: —</p>
+  </div>
+
+  <div class="wrap">
+    <header class="sec-head rv">
+      <p class="sec-eyebrow">Что умеет GrantHub</p>
+      <h2 class="sec-title">Один агент вместо<br>десятков вкладок</h2>
+    </header>
+    <div class="features">
+      <article class="feat rv">
+        <span class="feat-idx">01</span>
+        <span class="feat-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+        <h3>Живой каталог</h3><p>Казахстан и зарубежье, бакалавриат и магистратура. Каждый грант привязан к источнику и статусу приёма.</p>
+      </article>
+      <article class="feat rv">
+        <span class="feat-idx">02</span>
+        <span class="feat-icon"><svg viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4Z"/><path d="M5 21a7 7 0 0 1 14 0"/></svg></span>
+        <h3>Персональный совет</h3><p>Заполни IELTS, GPA и направление — ИИ будет рекомендовать то, что реально подходит под твой уровень.</p>
+      </article>
+      <article class="feat rv">
+        <span class="feat-idx">03</span>
+        <span class="feat-icon"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg></span>
+        <h3>Напоминания</h3><p>Сохраняй гранты в избранное — за 7, 3 и 1 день до дедлайна ты увидишь напоминание.</p>
+      </article>
+      <article class="feat rv">
+        <span class="feat-idx">04</span>
+        <span class="feat-icon"><svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 1 5 5v2h1a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h1V7a5 5 0 0 1 5-5Z"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg></span>
+        <h3>Локальный ИИ</h3><p>Работает на локальной модели без облачных лимитов и квот. Твои вопросы не уходят третьим лицам.</p>
+      </article>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <header class="sec-head rv">
+      <p class="sec-eyebrow">Как это работает</p>
+      <h2 class="sec-title">Три шага до заявки</h2>
+    </header>
+    <ol class="steps-row">
+      <li class="rv"><span class="step-num">1</span><h3>ИИ сканирует</h3><p>Дважды в день проходит по 150+ университетам и 70 конкурсам, отбрасывает закрытые наборы и статьи-подборки.</p></li>
+      <li class="rv"><span class="step-num">2</span><h3>Ты выбираешь</h3><p>Регион, уровень, ключевое слово. Сохраняй в избранное и спрашивай ИИ-ментора о деталях.</p></li>
+      <li class="rv"><span class="step-num">3</span><h3>Мы напоминаем</h3><p>За 7, 3 и 1 день до дедлайна приходит напоминание, чтобы ты успел подать документы.</p></li>
+    </ol>
+  </div>
+
+  <div class="wrap">
+    <div class="final rv">
+      <p class="sec-eyebrow">Начни сегодня</p>
+      <h2 class="sec-title">Твой грант уже<br>где-то ждёт</h2>
+      <div class="final-actions">
+        <a class="cta cta--inline" href="/app#catalog">Найти свой грант</a>
+        <a class="pill pill--dark pill--lg" href="/app#chat">Спросить ИИ</a>
+      </div>
+    </div>
+    <footer class="below-foot">
+      <ul class="foot__words"><li>Университеты</li><li>конкурсы</li><li>дедлайны</li></ul>
+      <a href="#contact" data-slide="contact">Baigani1928@gmail.com</a>
+    </footer>
+  </div>
+</section>
+
+<script src="/static/i18n.js?v=7"></script>
+<script src="/static/landing/landing.js?v=7"></script>
+</body>
+</html>

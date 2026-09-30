@@ -1,0 +1,11 @@
+aiogram>=3.22,<4
+aiosqlite>=0.22
+aiohttp>=3.12
+apscheduler>=3.11,<4
+# google-genai>=1.47   # только если используете Gemini (LLM_PROVIDER/LLM_FALLBACK=gemini)
+ddgs>=9
+python-dotenv>=1.2
+tzdata
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# sentry-sdk>=2   # только если задан SENTRY_DSN (отслеживание ошибок)
