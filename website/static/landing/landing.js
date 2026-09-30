@@ -141,7 +141,7 @@
   const tt = (k, d) => T[k] || d;
   // Флаг — эмодзи из кода страны ISO; без кода (несколько стран) — глобус
   const flagEmoji = (code) => /^[A-Za-z]{2}$/.test(code || '') ? code.toUpperCase().replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0))) : '';
-  const flagOf = (g) => `<span class="flag">${flagEmoji(g.country_code) || '🌍'}</span>`;
+  const flagOf = (g) => `<span class="flag">${flagEmoji(g.country_code) || '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>'}</span>`;
   $('#liveTitle').textContent = tt('live.title', 'Только что найдено');
   fetch('/api/recent-grants?limit=12').then(r => r.ok ? r.json() : null).then(d => {
     if (!d || !d.items.length) { $('#live').hidden = true; return; }

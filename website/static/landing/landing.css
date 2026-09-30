@@ -318,3 +318,6 @@ html::-webkit-scrollbar { display: none; width: 0; }
 .ios-sb i { position: absolute; top: 0; right: 0; width: 5px; min-height: 36px; border-radius: 999px; background: var(--sb-on); box-shadow: 0 0 0 .5px rgba(0,0,0,.25); transition: width .15s ease, background .15s ease; }
 .ios-sb.on i { pointer-events: auto; cursor: default; touch-action: none; }
 .ios-sb i:hover, .ios-sb.drag i { width: 9px; background: var(--sb-hover); }
+
+.ico { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -.15em; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

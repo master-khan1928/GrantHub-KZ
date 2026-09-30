@@ -82,15 +82,6 @@
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, 2800);
   };
 
-  // ---------- Ripple ----------
-  document.addEventListener('pointerdown', (e) => {
-    const b = e.target.closest('.btn'); if (!b || reduced) return;
-    const r = document.createElement('span'); r.className = 'ripple';
-    const rect = b.getBoundingClientRect(); const size = Math.max(rect.width, rect.height);
-    r.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - rect.left - size / 2}px;top:${e.clientY - rect.top - size / 2}px`;
-    b.appendChild(r); setTimeout(() => r.remove(), 650);
-  });
-
   // ---------- Theme: dark по умолчанию, light по кнопке (запоминается) ----------
   const root = document.documentElement;
   let savedTheme = null; try { savedTheme = localStorage.getItem('gh_theme'); } catch { }
@@ -182,6 +173,22 @@
   };
 
   // ---------- Grant card ----------
+  const svg = (d, extra = '') => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"${extra}>${d}</svg>`;
+  const ui = {
+    globe: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+    search: svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+    clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    bell: svg('<path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7Z"/><path d="M10 20a2 2 0 0 0 4 0"/>'),
+    home: svg('<path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'),
+    book: svg('<path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/>'),
+    star: svg('<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9L12 3Z"/>'),
+    chat: svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'),
+    user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+    theme: svg('<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/>'),
+    lang: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+    warn: svg('<path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17h.01"/>'),
+    building: svg('<path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/>'),
+  };
   const icon = {
     money: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>',
     list: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>',
@@ -201,7 +208,7 @@
   const fundingTag = (g) => (g.funding === 'full' || g.funding === 'partial') ? `<span class="tag">${t('funding.' + g.funding)}</span>` : '';
   // Флаг — эмодзи из кода страны ISO (региональные символы Unicode): 'KZ' -> 🇰🇿. Без кода — несколько стран
   const flagEmoji = (code) => /^[A-Za-z]{2}$/.test(code || '') ? code.toUpperCase().replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0))) : '';
-  const flagOf = (g) => `<span class="flag">${flagEmoji(g.country_code) || '🌍'}</span>`;
+  const flagOf = (g) => `<span class="flag">${flagEmoji(g.country_code) || ui.globe}</span>`;
   const placeOf = (g) => g.source || countryName(g.country_code) || (g.category === 'kz' ? t('region.kz') : t('region.abroad'));
   const plural = (n) => { if (LANG !== 'ru') return n === 1 ? t('card.day1') : t('card.days'); const m10 = n % 10, m100 = n % 100; if (m10 === 1 && m100 !== 11) return t('card.day1'); if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return t('card.days2'); return t('card.days'); };
   const deadlineBlock = (g) => {
@@ -339,7 +346,7 @@
   const loadCatalog = async (reset) => {
     const grid = $('#catalogGrid'), more = $('#loadMore');
     if (reset) { state.cursor = null; state.shown = 0; setStep(); syncFilters(); skeletons(grid); more.hidden = true; }
-    $('#crumbs').innerHTML = `<span>${state.region === 'kz' ? '🇰🇿 ' : '🌍 '}${scopeLabel[state.region]}</span><span>${degreeLabel[state.degree]}</span>`;
+    $('#crumbs').innerHTML = `<span>${state.region === 'kz' ? flagEmoji('KZ') + ' ' : ui.globe}${scopeLabel[state.region]}</span><span>${degreeLabel[state.degree]}</span>`;
     try {
       const q = new URLSearchParams({ category: state.region, degree: state.degree, limit: 12 });
       Object.entries(state.filters).forEach(([k, v]) => { if (v) q.set(k, v); });
@@ -350,7 +357,7 @@
       $('#crumbs').insertAdjacentHTML('beforeend', `<span>${t('total')}: ${d.total}</span>`);
       if (reset && !d.items.length) {
         const filtered = Object.values(state.filters).some(Boolean) || state.degree !== 'all';
-        grid.innerHTML = `<div class="empty"><div class="empty-icon">🔎</div><p>${filtered ? t('catalog.emptyFiltered') : t('catalog.empty')}</p>${filtered ? `<button class="btn btn-ghost btn-sm" id="emptyReset">${t('filter.reset')}</button>` : ''}</div>`;
+        grid.innerHTML = `<div class="empty"><div class="empty-icon">${ui.search}</div><p>${filtered ? t('catalog.emptyFiltered') : t('catalog.empty')}</p>${filtered ? `<button class="btn btn-ghost btn-sm" id="emptyReset">${t('filter.reset')}</button>` : ''}</div>`;
         $('#emptyReset')?.addEventListener('click', () => { state.filters = { country: '', funding: '', deadline: '', req: '' }; state.degree = 'all'; loadCatalog(true); });
         return;
       }
@@ -411,7 +418,7 @@
     try {
       const d = await api('/api/reminders'); const box = $('#reminders');
       box.hidden = !d.items.length;
-      box.innerHTML = d.items.map(r => r.kind === 'opened' ? `<div class="rem">🔔 <div>${t('rem.opened', { name: esc(r.name) })}</div><a href="${esc(r.link)}" target="_blank" rel="noopener">${t('rem.open')}</a></div>` : `<div class="rem">⏰ <div>${t('rem.text', { name: esc(r.name) })} <b>${r.days_left === 0 ? t('rem.lessday') : r.days_left + ' ' + t('tag.days')}</b></div><a href="${esc(r.link)}" target="_blank" rel="noopener">${t('rem.open')}</a></div>`).join('');
+      box.innerHTML = d.items.map(r => r.kind === 'opened' ? `<div class="rem">${ui.bell}<div>${t('rem.opened', { name: esc(r.name) })}</div><a href="${esc(r.link)}" target="_blank" rel="noopener">${t('rem.open')}</a></div>` : `<div class="rem">${ui.clock} <div>${t('rem.text', { name: esc(r.name) })} <b>${r.days_left === 0 ? t('rem.lessday') : r.days_left + ' ' + t('tag.days')}</b></div><a href="${esc(r.link)}" target="_blank" rel="noopener">${t('rem.open')}</a></div>`).join('');
     } catch { /* тихо */ }
   };
 
@@ -500,7 +507,7 @@
       }
       bubble.innerHTML = md(text || t('chat.empty'));
       if (answerId) bubble.insertAdjacentHTML('beforeend', `<div class="fb" data-answer="${answerId}"><button data-rate="1" title="${t('fb.up')}">👍</button><button data-rate="-1" title="${t('fb.down')}">👎</button></div>`);
-    } catch (err) { bubble.textContent = '⚠️ ' + err.message; }
+    } catch (err) { bubble.innerHTML = `${ui.warn} ${esc(err.message)}`; }
     finally { sendBtn.disabled = false; $('#chatStatus').textContent = t('chat.status'); input.focus(); }
   };
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); ask(input.value); });
@@ -540,7 +547,7 @@
   const renderReview = (r) => {
     $('#reviewList').innerHTML = r.items.length ? r.items.map(g => `
       <div class="review-item" data-review="${g.id}">
-        <div><b>#${g.id} · ${esc(g.name)}</b><div class="muted">${esc(g.source || '—')} · <a href="${/^https?:\/\//i.test(g.link) ? esc(g.link) : '#'}" target="_blank" rel="noopener nofollow">${esc(g.link)}</a></div><div>⚠️ ${esc(g.review_note || 'новая запись')}</div><div class="muted">Дедлайн: ${esc(g.deadline_date || '—')}${g.deadline_confirmed ? ' ✓' : ' (не подтверждён)'} · ${esc(g.deadline)}</div></div>
+        <div><b>#${g.id} · ${esc(g.name)}</b><div class="muted">${esc(g.source || '—')} · <a href="${/^https?:\/\//i.test(g.link) ? esc(g.link) : '#'}" target="_blank" rel="noopener nofollow">${esc(g.link)}</a></div><div>${ui.warn} ${esc(g.review_note || 'новая запись')}</div><div class="muted">Дедлайн: ${esc(g.deadline_date || '—')}${g.deadline_confirmed ? ' ✓' : ' (не подтверждён)'} · ${esc(g.deadline)}</div></div>
         <div class="inline-form"><input type="text" maxlength="2" value="${esc(g.country_code || '')}" placeholder="ISO" aria-label="Код страны"><input type="date" class="rv-date" value="${esc(g.deadline_date || '')}" aria-label="Дедлайн"><button class="btn btn-primary btn-sm" data-approve="1">Одобрить</button><button class="btn btn-danger btn-sm" data-approve="0">Отклонить</button></div>
       </div>`).join('') : 'Очередь пуста — все записи прошли проверку автоматически.';
   };
@@ -570,7 +577,7 @@
     const b = e.target.closest('[data-syn]'); if (!b) return;
     try { await api(`/api/admin/synonyms/${b.dataset.syn}`, { method: 'DELETE' }); b.closest('.tag').remove(); } catch (err) { toast(err.message, 'err'); }
   });
-  const kindLabel = { university: '🏛 Университеты', program: '🌍 Международные конкурсы', broad: '🔎 Общие запросы' };
+  const kindLabel = { university: `${ui.building} Университеты`, program: `${ui.globe} Международные конкурсы`, broad: `${ui.search} Общие запросы` };
   const renderMonitor = (m) => {
     const rows = Object.entries(m.by_kind).map(([k, r]) => `<tr><td>${kindLabel[k] || k}</td><td>${r.n}</td><td>${r.last ? esc(r.last.replace('T', ' ')) : '—'}</td><td>${r.found || 0}</td><td>${r.new || 0}</td><td>${r.total || 0}</td><td>${r.errors || 0}</td></tr>`).join('');
     const top = m.top.length ? `<p class="muted" style="margin:12px 0 4px">Самые результативные источники:</p><div>${m.top.map(t => `<span class="tag">${esc(t.name)} — ${t.total_new}</span> `).join('')}</div>` : '';
@@ -698,11 +705,11 @@
   const palette = $('#palette'), pInput = $('#paletteInput'), pList = $('#paletteList');
   let pItems = [], pActive = 0, pTimer = null, pSeq = 0;
   const NAV_ITEMS = () => [
-    { ico: '🏠', label: t('nav.homeapp'), run: () => show('home') }, { ico: '📚', label: t('nav.catalog'), run: () => show('catalog') },
-    { ico: '🔎', label: t('nav.search'), run: () => show('search') }, { ico: '⭐', label: t('nav.favorites'), run: () => show('favorites') },
-    { ico: '🤖', label: t('nav.chat'), run: () => show('chat') }, { ico: '👤', label: t('nav.profile'), run: () => show('profile') },
-    { ico: '🌗', label: t('palette.theme'), run: () => $('#themeToggle').click() },
-    { ico: '🌍', label: t('palette.lang') + ' · Рус', run: () => I.setLang('ru') }, { ico: '🌍', label: t('palette.lang') + ' · Қаз', run: () => I.setLang('kz') }, { ico: '🌍', label: t('palette.lang') + ' · Eng', run: () => I.setLang('en') },
+    { ico: ui.home, label: t('nav.homeapp'), run: () => show('home') }, { ico: ui.book, label: t('nav.catalog'), run: () => show('catalog') },
+    { ico: ui.search, label: t('nav.search'), run: () => show('search') }, { ico: ui.star, label: t('nav.favorites'), run: () => show('favorites') },
+    { ico: ui.chat, label: t('nav.chat'), run: () => show('chat') }, { ico: ui.user, label: t('nav.profile'), run: () => show('profile') },
+    { ico: ui.theme, label: t('palette.theme'), run: () => $('#themeToggle').click() },
+    { ico: ui.lang, label: t('palette.lang') + ' · Рус', run: () => I.setLang('ru') }, { ico: ui.lang, label: t('palette.lang') + ' · Қаз', run: () => I.setLang('kz') }, { ico: ui.lang, label: t('palette.lang') + ' · Eng', run: () => I.setLang('en') },
   ];
   const renderPalette = (groups) => {
     pItems = []; let html = '';
