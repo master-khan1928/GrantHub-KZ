@@ -42,7 +42,6 @@
     const lbl = (sel, key) => { const el = $(sel); if (el && el.firstChild && el.firstChild.nodeType === 3) el.firstChild.textContent = t(key) + ' '; };
     lbl('#profileForm label:nth-of-type(3)', 'profile.field'); lbl('#nameField', 'auth.name'); lbl('#authForm label:nth-of-type(2)', 'auth.email'); lbl('#authForm label:nth-of-type(3)', 'auth.password');
     const navFav = $('#nav a[data-nav="favorites"]'); if (navFav && navFav.firstChild) navFav.firstChild.textContent = t('nav.favorites') + ' ';
-    const pillOnline = $('.topbar-actions .pill--dark'); if (pillOnline && pillOnline.lastChild) pillOnline.lastChild.textContent = t('pill.online');
     const quick = $('#quickSearch'); if (quick) quick.innerHTML = t('quick').map(q => `<button>${q}</button>`).join('');
     const sug = $('#suggestions'); if (sug) sug.innerHTML = t('suggestions').map(q => `<button>${q}</button>`).join('');
     $('#logoutBtn')?.setAttribute('title', t('logout'));
@@ -85,7 +84,7 @@
   // ---------- Theme: dark по умолчанию, light по кнопке (запоминается) ----------
   const root = document.documentElement;
   let savedTheme = null; try { savedTheme = localStorage.getItem('gh_theme'); } catch { }
-  root.dataset.theme = savedTheme === 'light' ? 'light' : 'dark';
+  root.dataset.theme = savedTheme === 'dark' ? 'dark' : 'light';   // светлая по умолчанию
   $('#themeToggle')?.addEventListener('click', () => {
     root.dataset.theme = root.dataset.theme === 'light' ? 'dark' : 'light';
     try { localStorage.setItem('gh_theme', root.dataset.theme); } catch { }
@@ -346,7 +345,7 @@
   const loadCatalog = async (reset) => {
     const grid = $('#catalogGrid'), more = $('#loadMore');
     if (reset) { state.cursor = null; state.shown = 0; setStep(); syncFilters(); skeletons(grid); more.hidden = true; }
-    $('#crumbs').innerHTML = `<span>${state.region === 'kz' ? flagEmoji('KZ') + ' ' : ui.globe}${scopeLabel[state.region]}</span><span>${degreeLabel[state.degree]}</span>`;
+    $('#crumbs').innerHTML = '';
     try {
       const q = new URLSearchParams({ category: state.region, degree: state.degree, limit: 12 });
       Object.entries(state.filters).forEach(([k, v]) => { if (v) q.set(k, v); });
