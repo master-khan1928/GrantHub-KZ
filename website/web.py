@@ -254,13 +254,13 @@ async def grant_page(grant_id: int):
         ("Покрытие", p["coverage"]), ("Требования", p["requirements"]), ("Дедлайн", deadline),
         ("Уровень", degree), ("Регион", f"{region} {flag_emoji(p['country_code']) or '🌍'}"), ("Источник", p["source"] or "—")) if v)
     tags = "".join(f"<span class=\"tag\">{_html(x)}</span>" for x in (status, {"full": "полный грант", "partial": "частичный грант"}.get(p["funding"], "")) if x)
-    return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
+    return f"""<!doctype html><html lang="ru" data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_html(p['name'])} — GrantHub</title>
 <meta name="description" content="{desc}"><link rel="canonical" href="{_html(canonical)}">
 <meta property="og:title" content="{_html(p['name'])}"><meta property="og:description" content="{desc}"><meta property="og:type" content="article">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=13">
+<link rel="stylesheet" href="/static/app.css?v=9">
 <script>if (/Windows/.test(navigator.userAgent) && !/Firefox/.test(navigator.userAgent)) document.documentElement.classList.add('flag-font');</script></head>
 <body><main class="container" style="max-width:820px;margin:0 auto;padding:40px 16px">
 <p class="eyebrow">{_html(region)} · {_html(degree)}</p>
