@@ -7,7 +7,6 @@
 import base64
 import hashlib
 import hmac
-import json
 import os
 import random
 import re
@@ -97,7 +96,8 @@ def read_uid_cookie(raw: str) -> Optional[int]:
     if not raw or "." not in raw:
         return None
     uid, sig = raw.split(".", 1)
-    if not uid.isdigit() or not (10**12 <= int(uid) < 10**13):
+    # случайный id посетителя — 13 цифр; после привязки Telegram в cookie живёт Telegram id (короче)
+    if not uid.isdigit() or not (0 < int(uid) < 10**13):
         return None
     if not hmac.compare_digest(_sign("uid:" + uid)[:32], sig):
         return None
@@ -149,7 +149,7 @@ def _anon_uid(request: Request) -> Optional[int]:
     return read_uid_cookie(request.cookies.get(UID_COOKIE, ""))
 
 
-def _set_login_cookies(response: Response, account: dict):
+def set_login_cookies(response: Response, account: dict):
     response.set_cookie(SESSION_COOKIE, make_session(account["id"], account["uid"]), max_age=SESSION_TTL,
                         httponly=True, samesite="lax", secure=COOKIE_SECURE)
     set_uid_cookie(response, account["uid"])
@@ -209,7 +209,7 @@ async def auth_register(data: RegisterIn, request: Request, response: Response):
     account = await create_account(anon or _new_uid(), "email", email=email,
                                    name=(data.name or "").strip() or email.split("@")[0],
                                    password_hash=hash_password(data.password))
-    _set_login_cookies(response, account)
+    set_login_cookies(response, account)
     return {"user": _public(account)}
 
 
@@ -223,7 +223,7 @@ async def auth_login(data: LoginIn, request: Request, response: Response):
         raise HTTPException(401, "Неверная почта или пароль")
     await merge_anonymous_user(_anon_uid(request), account["uid"])
     await touch_account_login(account["id"])
-    _set_login_cookies(response, account)
+    set_login_cookies(response, account)
     return {"user": _public(account)}
 
 

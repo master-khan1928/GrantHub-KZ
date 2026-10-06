@@ -246,6 +246,78 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Test grant", page.text)
         self.assertIn(f"/grant/{gid}", self.client.get("/sitemap.xml").text)
 
+    def test_match_by_profile(self):
+        from core.matching import match_grants, score_grant
+        g = {"name": "IT grant", "coverage": "", "requirements": "IELTS 6.5, GPA 3.5", "status": "open", "deadline_date": None}
+        sc, why, gaps = score_grant(g, {"ielts": 6.0, "gpa": 3.7, "field_of_interest": "IT"})
+        self.assertEqual(gaps, {"ielts": 0.5})
+        self.assertIn("field", why)
+        res = match_grants([g, dict(g, requirements="IELTS 6.0")], {"ielts": 6.0, "gpa": None, "field_of_interest": None})
+        self.assertEqual(len(res["matches"]), 1)
+        self.assertEqual(len(res["near"]), 1)
+        # API: без профиля — пусто, с профилем — списки
+        self.assertFalse(self.client.get("/api/match").json()["has_profile"])
+        self.client.post("/api/profile", json={"ielts": 9.0, "gpa": None, "field_of_interest": None})
+        d = self.client.get("/api/match").json()
+        self.assertTrue(d["has_profile"])
+        self.assertTrue(d["items"])
+        self.assertIn("gaps", d["items"][0])
+
+    def test_link_from_site_code_used_in_bot(self):
+        gid = self.client.get("/api/grants?category=all&limit=1").json()["items"][0]["id"]
+        self.client.post(f"/api/favorites/{gid}")
+        self.assertFalse(self.client.get("/api/me").json()["telegram_linked"])
+        code = self.client.post("/api/link/code").json()["code"]
+        self.assertFalse(self.client.get(f"/api/link/status?code={code}").json()["linked"])
+        tg_id = 424242
+        self.assertTrue(run(db.consume_link_code(code, "web", tg_id))["ok"])          # бот принял код
+        self.assertEqual(run(db.consume_link_code(code, "web", tg_id))["error"], "bad_code")  # повторно — нельзя
+        self.assertTrue(self.client.get(f"/api/link/status?code={code}").json()["linked"])
+        me = self.client.get("/api/me").json()
+        self.assertEqual(me["user_id"], tg_id)
+        self.assertTrue(me["telegram_linked"])
+        self.assertIn(gid, {g["id"] for g in self.client.get("/api/favorites").json()["items"]})
+        self.assertEqual(self.client.post("/api/link/code").status_code, 409)         # уже привязан
+        self.client.cookies.clear()
+
+    def test_link_from_bot_code_entered_on_site(self):
+        tg_id = 515151
+        run(db.add_user(tg_id))
+        run(db.set_user_profile(tg_id, ielts=7.0))
+        code = run(db.create_link_code("tg", tg_id))["code"]
+        self.assertEqual(self.client.post("/api/link/confirm", json={"code": "ZZZZZZ"}).status_code, 400)
+        self.assertEqual(self.client.post("/api/link/confirm", json={"code": code.lower()}).status_code, 200)
+        me = self.client.get("/api/me").json()
+        self.assertEqual(me["user_id"], tg_id)
+        self.assertEqual(me["profile"]["ielts"], 7.0)
+        self.client.cookies.clear()
+
+    def test_link_keeps_web_session(self):
+        r = self.client.post("/api/auth/register", json={"email": "link@test.kz", "password": "secret1", "name": "Linker"})
+        self.assertEqual(r.status_code, 200)
+        tg_id = 616161
+        code = run(db.create_link_code("tg", tg_id))["code"]
+        self.assertEqual(self.client.post("/api/link/confirm", json={"code": code}).status_code, 200)
+        me = self.client.get("/api/me").json()
+        self.assertEqual(me["user_id"], tg_id)
+        self.assertEqual(me["account"]["email"], "link@test.kz")      # сессия не потерялась
+        self.assertTrue(me["telegram_linked"])
+        self.assertEqual(self.client.get("/api/auth/me").json()["user"]["name"], "Linker")
+        self.client.cookies.clear()
+
+    def test_audience_stats_admin_only(self):
+        self.client.get("/api/grants?category=all&limit=1")   # посетитель сайта получает cookie и событие
+        run(db.add_user(777))
+        run(db.log_event(777, "start"))
+        self.assertEqual(self.client.get("/api/admin/stats").status_code, 401)
+        a = self.client.get("/api/admin/stats", headers={"X-Admin-Token": "test-token"}).json()["audience"]
+        self.assertGreaterEqual(a["users"]["telegram"], 1)
+        self.assertGreaterEqual(a["users"]["site"], 1)
+        self.assertGreaterEqual(a["active"]["today"]["telegram"], 1)
+        self.assertEqual(a["users"]["total"], a["users"]["telegram"] + a["users"]["site"])
+        self.assertEqual(len(a["daily"]), 14)
+        self.assertGreaterEqual(a["daily"][-1]["active"], 1)
+
     def test_admin_rate_limit_and_health(self):
         self.assertEqual(self.client.get("/healthz").json()["db"], True)
         self.assertEqual(self.client.get("/api/admin/runs", headers={"X-Admin-Token": "test-token"}).status_code, 200)

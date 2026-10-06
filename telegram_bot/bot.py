@@ -53,8 +53,14 @@ from core.database import (
     get_opened_alerts,
     mark_alert_notified,
     backup_database,
+    get_all_active_grants,
+    get_audience_stats,
+    create_link_code,
+    consume_link_code,
+    is_linked,
 )
 from core.geo import flag_emoji
+from core.matching import has_profile, match_grants
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -164,6 +170,13 @@ T = {
         "open": "🟢 приём открыт", "upcoming": "🟡 скоро откроется",
         "lang_pick": "🌍 Выбери язык / Тілді таңда / Choose a language:", "lang_set": "✅ Язык: Русский",
         "region_step": "Шаг 2 из 2: выбери уровень обучения 👇",
+        "match_btn": "🎯 Мне подходит", "match_more": "➡️ Ещё", "match_menu": "🏠 В главное меню",
+        "match_title": "🎯 <b>Подходит под твой профиль</b> (показано {shown} из {total}):\n\n",
+        "match_near": "\n\n🟡 <b>Почти подходят</b> — не хватает одного показателя:\n\n",
+        "match_none": "😔 Пока ни один грант не подходит под профиль целиком. Загляни в каталог: /start",
+        "match_no_profile": "🧑‍🎓 Сначала заполни профиль командой /profile — укажи IELTS, GPA или направление, и я подберу гранты под тебя.",
+        "why_field": "по направлению", "why_ielts_ok": "IELTS подходит", "why_gpa_ok": "GPA подходит", "why_open": "приём открыт",
+        "gap_ielts": "не хватает {n} IELTS", "gap_gpa": "не хватает {n} GPA",
     },
     "kz": {
         "start": ("🚀 <b>Гранттар мен шәкіртақылар бойынша жеке ЖИ-агентің!</b>\n\n"
@@ -180,6 +193,13 @@ T = {
         "open": "🟢 қабылдау ашық", "upcoming": "🟡 жақында ашылады",
         "lang_pick": "🌍 Выбери язык / Тілді таңда / Choose a language:", "lang_set": "✅ Тіл: Қазақша",
         "region_step": "2-қадам / 2: оқу деңгейін таңда 👇",
+        "match_btn": "🎯 Маған сай", "match_more": "➡️ Тағы", "match_menu": "🏠 Басты мәзір",
+        "match_title": "🎯 <b>Профиліңе сай келеді</b> ({total} ішінен {shown} көрсетілді):\n\n",
+        "match_near": "\n\n🟡 <b>Сай келуге жақын</b> — бір көрсеткіш жетпейді:\n\n",
+        "match_none": "😔 Әзірге профильге толық сай грант жоқ. Каталогты қара: /start",
+        "match_no_profile": "🧑‍🎓 Алдымен /profile командасымен профильді толтыр — IELTS, GPA немесе бағытты көрсет, мен гранттарды саған сай іріктеймін.",
+        "why_field": "бағыт бойынша", "why_ielts_ok": "IELTS сай", "why_gpa_ok": "GPA сай", "why_open": "қабылдау ашық",
+        "gap_ielts": "IELTS {n} жетпейді", "gap_gpa": "GPA {n} жетпейді",
     },
     "en": {
         "start": ("🚀 <b>Your personal AI agent for grants and scholarships!</b>\n\n"
@@ -196,6 +216,13 @@ T = {
         "open": "🟢 applications open", "upcoming": "🟡 opening soon",
         "lang_pick": "🌍 Выбери язык / Тілді таңда / Choose a language:", "lang_set": "✅ Language: English",
         "region_step": "Step 2 of 2: choose the degree level 👇",
+        "match_btn": "🎯 For me", "match_more": "➡️ More", "match_menu": "🏠 Main menu",
+        "match_title": "🎯 <b>Matched to your profile</b> (showing {shown} of {total}):\n\n",
+        "match_near": "\n\n🟡 <b>Almost there</b> — one score short:\n\n",
+        "match_none": "😔 No grant fully fits your profile yet. Browse the catalog: /start",
+        "match_no_profile": "🧑‍🎓 Fill in your profile first with /profile — IELTS, GPA or field — and I will pick grants for you.",
+        "why_field": "field matches", "why_ielts_ok": "IELTS fits", "why_gpa_ok": "GPA fits", "why_open": "applications open",
+        "gap_ielts": "{n} IELTS short", "gap_gpa": "{n} GPA short",
     },
 }
 LANG_NAMES = {"ru": "🇷🇺 Русский", "kz": "🇰🇿 Қазақша", "en": "🇬🇧 English"}
@@ -207,9 +234,6 @@ def tr(lang: str, key: str) -> str:
 
 def lang_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=n, callback_data=f"lang:{code}") for code, n in LANG_NAMES.items()]])
-
-
-_STATUS_LABELS = {"open": "🟢 приём открыт", "upcoming": "🟡 скоро откроется"}
 
 
 def grant_card_text(g: dict, lang: str = "ru") -> str:
@@ -262,6 +286,7 @@ def get_region_menu(lang: str = "ru") -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=tr(lang, "kz_btn"), callback_data="region:kz")],
         [InlineKeyboardButton(text=tr(lang, "abroad_btn"), callback_data="region:abroad")],
+        [InlineKeyboardButton(text=tr(lang, "match_btn"), callback_data="match:0")],
         site_button_row(lang),
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -340,7 +365,122 @@ async def cmd_start(message: types.Message):
     await add_user(message.from_user.id)
     await log_event(message.from_user.id, "start")
     lang = await get_user_lang(message.from_user.id)
+    payload = (message.text or "").partition(" ")[2].strip()
+    if payload.lower().startswith("link_"):          # ссылка с сайта: t.me/бот?start=link_КОД
+        await _do_link(message, payload[5:])
+        return
     await message.answer(tr(lang, "start"), parse_mode="HTML", reply_markup=get_region_menu(lang))
+
+
+# --- Привязка сайта ---
+
+_LINK_ERRORS = {
+    "bad_code": "❌ Код не найден или уже использован. Получи новый на сайте в разделе «Профиль».",
+    "expired": "⌛ Код устарел — он живёт 10 минут. Получи новый на сайте.",
+    "same": "Это уже один и тот же аккаунт.",
+    "web_linked": "К этому аккаунту сайта уже привязан другой Telegram.",
+    "tg_taken": "К твоему Telegram уже привязан другой аккаунт сайта.",
+}
+
+
+async def _do_link(message: types.Message, code: str):
+    result = await consume_link_code(code, "web", message.from_user.id)
+    if not result["ok"]:
+        await message.answer(_LINK_ERRORS.get(result["error"], "Не удалось привязать."))
+        return
+    await log_event(message.from_user.id, "telegram_linked", {"from": "bot"})
+    await message.answer(
+        "✅ <b>Сайт привязан!</b>\n\nИзбранное, профиль и подписки объединены. Напоминания о дедлайнах "
+        "будут приходить сюда, а на сайте всё то же самое в браузере.\n\n/favorites — избранное, /match — подбор под профиль.",
+        parse_mode="HTML",
+    )
+
+
+@dp.message(Command("link"))
+async def cmd_link(message: types.Message):
+    code = message.text.partition(" ")[2].strip()
+    if code:
+        await _do_link(message, code)
+        return
+    if await is_linked(message.from_user.id):
+        await message.answer("✅ Сайт уже привязан к этому Telegram. Избранное и профиль общие.")
+        return
+    info = await create_link_code("tg", message.from_user.id)
+    await message.answer(
+        "🔗 <b>Привязка сайта GrantHub</b>\n\n"
+        f"Открой на сайте раздел «Профиль» → «Telegram» и введи код:\n\n<code>{info['code']}</code>\n\n"
+        f"Код действует 10 минут.\n👉 {esc(SITE_URL)}/app#profile\n\n"
+        "Или наоборот: получи код на сайте и отправь мне <code>/link КОД</code>.",
+        parse_mode="HTML", disable_web_page_preview=True,
+    )
+
+
+# --- Подбор под профиль ---
+
+MATCH_PAGE = 3
+
+
+def _match_card(item: dict, lang: str) -> str:
+    g = item["grant"]
+    good = [tr(lang, "why_" + w) for w in item["why"]]
+    gaps = [tr(lang, "gap_" + k).replace("{n}", str(n)) for k, n in item["gaps"].items()]
+    line = ""
+    if good:
+        line += "✅ " + " · ".join(good) + "\n"
+    if gaps:
+        line += "⚠️ " + " · ".join(gaps) + "\n"
+    return line + grant_card_text(g, lang)
+
+
+async def render_match_page(user_id: int, offset: int):
+    lang = await get_user_lang(user_id)
+    profile = await get_user_profile(user_id)
+    if not has_profile(profile):
+        return tr(lang, "match_no_profile"), None
+    result = match_grants(await get_all_active_grants(), profile)
+    matches, near = result["matches"], result["near"]
+    if not matches and not near:
+        return tr(lang, "match_none"), None
+    page = matches[offset:offset + MATCH_PAGE]
+    text = ""
+    if page:
+        text = tr(lang, "match_title").replace("{shown}", str(offset + len(page))).replace("{total}", str(len(matches)))
+        text += "\n---\n\n".join(_match_card(i, lang) for i in page)
+    if offset + MATCH_PAGE >= len(matches) and near:   # последняя страница — добавляем «почти подходят»
+        text += tr(lang, "match_near") + "\n---\n\n".join(_match_card(i, lang) for i in near[:3])
+    text = text.strip()
+    rows = []
+    for i in page:
+        g = i["grant"]
+        fav = await is_favorite(user_id, g["id"])
+        label = ("✅ В избранном: " if fav else "⭐ В избранное: ") + g["name"][:24]
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"{'fav:remove' if fav else 'fav:add'}:{g['id']}:match:match:{offset}")])
+    if offset + MATCH_PAGE < len(matches):
+        rows.append([InlineKeyboardButton(text=tr(lang, "match_more"), callback_data=f"match:{offset + MATCH_PAGE}")])
+    rows.append([InlineKeyboardButton(text=tr(lang, "match_menu"), callback_data="menu:regions")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.message(Command("match"))
+async def cmd_match(message: types.Message):
+    await log_event(message.from_user.id, "match_view")
+    text, keyboard = await render_match_page(message.from_user.id, 0)
+    chunks = split_message(text)
+    for n, chunk in enumerate(chunks):
+        await message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True,
+                             reply_markup=keyboard if n == len(chunks) - 1 else None)
+
+
+@dp.callback_query(F.data.startswith("match:"))
+async def cb_match(call: types.CallbackQuery):
+    offset = int(call.data.split(":")[1])
+    await log_event(call.from_user.id, "match_view")
+    text, keyboard = await render_match_page(call.from_user.id, offset)
+    try:
+        await call.message.edit_text(text[:4000], parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
+    except Exception:
+        await call.message.answer(text[:4000], parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
+    await call.answer()
 
 
 @dp.message(Command("lang"))
@@ -381,6 +521,8 @@ async def cmd_help(message: types.Message):
         "/site — открыть сайт GrantHub (те же функции в браузере)\n"
         "/favorites — показать сохранённые гранты\n"
         "/profile — заполнить профиль (IELTS, GPA, направление) для персонализации\n"
+        "/match — гранты, которые подходят под твой профиль\n"
+        "/link — привязать сайт GrantHub: общее избранное и профиль\n"
         "/find &lt;слово&gt; — поиск грантов по ключевому слову\n"
         "/stop — отписаться от ежедневной рассылки новых грантов\n\n"
         "Также можешь просто написать мне вопрос текстом — я отвечу как консультант."
@@ -463,7 +605,7 @@ async def _finish_profile(user_id: int, data: dict, answer_func):
     summary_lines.append(f"IELTS: {data.get('ielts') if data.get('ielts') else 'не указан'}")
     summary_lines.append(f"GPA: {data.get('gpa') if data.get('gpa') else 'не указан'}")
     summary_lines.append(f"Направление: {field if field else 'не указано'}")
-    summary_lines.append("\nТеперь я буду учитывать это, когда буду отвечать на твои вопросы.")
+    summary_lines.append("\nТеперь я буду учитывать это, когда буду отвечать на твои вопросы.\n🎯 /match — гранты, которые подходят под твой профиль.")
     await answer_func("\n".join(summary_lines))
 
 
@@ -566,7 +708,10 @@ async def handle_fav_add(call: types.CallbackQuery):
     await add_favorite(call.from_user.id, grant_id)
     await log_event(call.from_user.id, "favorite_add", {"grant_id": grant_id})
     await call.answer("Добавлено в избранное ⭐")
-    if region != "menu":
+    if region == "match":
+        text, keyboard = await render_match_page(call.from_user.id, int(offset))
+        await call.message.edit_text(text[:4000], parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
+    elif region != "menu":
         text, keyboard = await render_grants_page(call.from_user.id, region, degree, offset=int(offset))
         await call.message.edit_text(text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
 
@@ -591,6 +736,9 @@ async def handle_fav_remove(call: types.CallbackQuery):
         ]
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
         await call.message.edit_text(header + body, parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
+    elif region == "match":
+        text, keyboard = await render_match_page(call.from_user.id, int(offset))
+        await call.message.edit_text(text[:4000], parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
     else:
         text, keyboard = await render_grants_page(call.from_user.id, region, degree, offset=int(offset))
         await call.message.edit_text(text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
@@ -754,12 +902,28 @@ async def manual_deactivate(message: types.Message):
 async def cmd_stats(message: types.Message):
     summary = await get_events_summary(days=7)
     active_users = await get_active_users_count(days=7)
+    a = await get_audience_stats()
+    u, act, nw = a["users"], a["active"], a["new"]
+
+    lines = [
+        "👥 <b>Аудитория</b>\n",
+        f"Всего людей: <b>{u['total']}</b> (Telegram {u['telegram']} · сайт {u['site']})",
+        f"Активны сегодня: <b>{act['today']['total']}</b> (бот {act['today']['telegram']} · сайт {act['today']['site']})",
+        f"Активны за 7 дней: <b>{act['7d']['total']}</b> (бот {act['7d']['telegram']} · сайт {act['7d']['site']})",
+        f"Активны за 30 дней: <b>{act['30d']['total']}</b> (бот {act['30d']['telegram']} · сайт {act['30d']['site']})",
+        f"Новых: сегодня {nw['today']} · за 7 дней {nw['7d']} · за 30 дней {nw['30d']}",
+        f"Аккаунтов на сайте: {u['accounts']}, привязано к Telegram: {u['linked']}",
+        f"Подписаны на рассылку: {u['subscribed']} · заполнили профиль: {u['with_profile']} · есть избранное: {u['with_favorites']}",
+    ]
+    spark = " ".join(f"{d['date'][8:]}:{d['active']}" for d in a["daily"][-7:])
+    lines.append(f"\nАктивных по дням (UTC): {spark}\n")
 
     if not summary:
-        await message.answer("Пока нет данных за последние 7 дней.")
+        lines.append("Событий за последние 7 дней пока нет.")
+        await message.answer("\n".join(lines), parse_mode="HTML")
         return
 
-    lines = [f"📊 <b>Статистика за 7 дней</b>\n", f"👥 Активных пользователей: {active_users}\n"]
+    lines += ["📊 <b>Статистика за 7 дней</b>\n", f"👥 Активных пользователей: {active_users}\n"]
     labels = {
         "start": "🚀 Запусков /start",
         "browse_catalog": "📂 Просмотров каталога",
@@ -770,6 +934,11 @@ async def cmd_stats(message: types.Message):
         "unsubscribe": "🚫 Отписок",
         "manual_scan": "🔍 Ручных сканирований",
         "search": "🔎 Поисковых запросов",
+        "profile_saved": "🧑‍🎓 Сохранений профиля",
+        "match_view": "🎯 Просмотров подбора",
+        "telegram_linked": "🔗 Привязок Telegram",
+        "site_open": "🌐 Переходов на сайт",
+        "alert_add": "🔔 Подписок на открытие",
     }
     for event_type, count in summary.items():
         label = labels.get(event_type, event_type)
@@ -991,6 +1160,8 @@ async def setup_commands():
         BotCommand(command="lang", description="Язык / Тіл / Language"),
         BotCommand(command="favorites", description="Мои сохранённые гранты"),
         BotCommand(command="profile", description="Настроить профиль"),
+        BotCommand(command="match", description="Гранты под мой профиль"),
+        BotCommand(command="link", description="Привязать сайт GrantHub"),
         BotCommand(command="find", description="Поиск грантов по слову"),
         BotCommand(command="stop", description="Отписаться от рассылки"),
         BotCommand(command="help", description="Что я умею"),

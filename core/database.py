@@ -5,13 +5,12 @@ import html
 import json
 import os
 import re
-import shutil
 import sqlite3
 import aiosqlite
 
 from pathlib import Path
 
-from core.geo import COUNTRY_BY_NAME, domain_country, resolve_location
+from core.geo import domain_country, resolve_location
 
 BASE_DIR = Path(__file__).resolve().parent.parent   # корень проекта
 # На хостинге база лежит на постоянном диске: DATA_DIR=/data (переменная окружения)
@@ -222,6 +221,8 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN gpa REAL",
             "ALTER TABLE users ADD COLUMN field_of_interest TEXT",
             "ALTER TABLE users ADD COLUMN lang TEXT",
+            "ALTER TABLE users ADD COLUMN linked_at TEXT",         # когда Telegram и сайт связали в один аккаунт
+            "ALTER TABLE web_accounts ADD COLUMN telegram_id INTEGER",
             "ALTER TABLE grants ADD COLUMN deadline_date TEXT",
             "ALTER TABLE grants ADD COLUMN source TEXT",       # университет/программа, где найдено
             "ALTER TABLE grants ADD COLUMN status TEXT",       # open | upcoming | unknown
@@ -364,6 +365,21 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 notified_at TEXT,                  -- когда бот отправил сообщение в Telegram
                 UNIQUE(user_id, grant_id)
+            )
+            """
+        )
+        # Привязка Telegram и сайта: одноразовый код живёт 10 минут. kind — кто его выдал (web | tg),
+        # uid — чей это аккаунт (uid сайта или Telegram id). После привязки данные живут под Telegram id.
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS link_codes (
+                code TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                linked_uid INTEGER
             )
             """
         )
@@ -588,6 +604,123 @@ async def merge_anonymous_user(from_uid: int, to_uid: int):
             (from_uid, from_uid, from_uid, to_uid),
         )
         await db.commit()
+
+
+# --- Привязка Telegram и сайта ---
+
+LINK_CODE_TTL_MINUTES = 10
+_LINK_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # без O/0 и I/1 — код диктуют или вводят вручную
+
+
+def _utcnow() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
+async def create_link_code(kind: str, uid: int) -> dict:
+    """Новый одноразовый код. Старые неиспользованные коды этого же пользователя отменяются."""
+    import secrets
+    assert kind in ("web", "tg")
+    now = _utcnow()
+    expires = now + datetime.timedelta(minutes=LINK_CODE_TTL_MINUTES)
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM link_codes WHERE (uid = ? AND kind = ? AND used_at IS NULL) OR expires_at < ?",
+                         (uid, kind, now.isoformat(timespec="seconds")))
+        while True:
+            code = "".join(secrets.choice(_LINK_ALPHABET) for _ in range(6))
+            async with db.execute("SELECT 1 FROM link_codes WHERE code = ?", (code,)) as cur:
+                if not await cur.fetchone():
+                    break
+        await db.execute(
+            "INSERT INTO link_codes (code, kind, uid, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+            (code, kind, uid, now.isoformat(timespec="seconds"), expires.isoformat(timespec="seconds")),
+        )
+        await db.commit()
+    return {"code": code, "expires_at": expires.isoformat(timespec="seconds") + "Z",
+            "expires_in": LINK_CODE_TTL_MINUTES * 60}
+
+
+async def get_link_code(code: str) -> dict:
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM link_codes WHERE code = ?", (code.strip().upper(),)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def is_linked(uid: int) -> bool:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT linked_at FROM users WHERE user_id = ?", (uid,)) as cur:
+            row = await cur.fetchone()
+            return bool(row and row[0])
+
+
+async def link_accounts(web_uid: int, telegram_id: int, code: str = None) -> dict:
+    """Сливает посетителя сайта (web_uid) с пользователем Telegram: избранное, профиль, подписки
+    переезжают под Telegram id, аккаунт сайта (если есть) начинает указывать на него.
+
+    -> {"ok": True, "uid": telegram_id} либо {"ok": False, "error": код ошибки}:
+       same          — это уже один и тот же пользователь
+       web_linked    — у этого аккаунта сайта уже привязан другой Telegram
+       tg_taken      — к этому Telegram уже привязан другой аккаунт сайта
+    """
+    if web_uid == telegram_id:
+        return {"ok": False, "error": "same"}
+    now = _utcnow().isoformat(timespec="seconds")
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT linked_at FROM users WHERE user_id = ?", (web_uid,)) as cur:
+            row = await cur.fetchone()
+        if row and row["linked_at"]:
+            return {"ok": False, "error": "web_linked"}
+        async with db.execute("SELECT id FROM web_accounts WHERE uid = ?", (web_uid,)) as cur:
+            account = await cur.fetchone()
+        async with db.execute("SELECT id FROM web_accounts WHERE uid = ? OR telegram_id = ?", (telegram_id, telegram_id)) as cur:
+            other = await cur.fetchone()
+        if other and (not account or other["id"] != account["id"]):
+            return {"ok": False, "error": "tg_taken"}
+
+        await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (telegram_id,))
+        await db.execute("INSERT OR IGNORE INTO favorites (user_id, grant_id) SELECT ?, grant_id FROM favorites WHERE user_id = ?",
+                         (telegram_id, web_uid))
+        await db.execute("INSERT OR IGNORE INTO open_alerts (user_id, grant_id) SELECT ?, grant_id FROM open_alerts WHERE user_id = ?",
+                         (telegram_id, web_uid))
+        await db.execute(
+            """
+            UPDATE users SET
+                ielts = COALESCE(ielts, (SELECT ielts FROM users WHERE user_id = ?)),
+                gpa = COALESCE(gpa, (SELECT gpa FROM users WHERE user_id = ?)),
+                field_of_interest = COALESCE(field_of_interest, (SELECT field_of_interest FROM users WHERE user_id = ?)),
+                linked_at = ?
+            WHERE user_id = ?
+            """,
+            (web_uid, web_uid, web_uid, now, telegram_id),
+        )
+        if account:
+            await db.execute("UPDATE web_accounts SET uid = ?, telegram_id = ? WHERE id = ?", (telegram_id, telegram_id, account["id"]))
+        # данные посетителя сайта переехали — старый uid больше не используется (cookie станет Telegram id)
+        await db.execute("DELETE FROM favorites WHERE user_id = ?", (web_uid,))
+        await db.execute("DELETE FROM open_alerts WHERE user_id = ?", (web_uid,))
+        await db.execute("DELETE FROM users WHERE user_id = ?", (web_uid,))
+        if code:
+            await db.execute("UPDATE link_codes SET used_at = ?, linked_uid = ? WHERE code = ?", (now, telegram_id, code.strip().upper()))
+        await db.commit()
+    return {"ok": True, "uid": telegram_id}
+
+
+async def consume_link_code(code: str, expected_kind: str, other_uid: int) -> dict:
+    """Проверяет код и выполняет привязку. expected_kind — кто должен был выдать код:
+    бот вводит код сайта (web), сайт вводит код бота (tg). other_uid — тот, кто вводит код.
+
+    -> результат link_accounts или {"ok": False, "error": "bad_code" | "expired"}.
+    """
+    row = await get_link_code(code or "")
+    if not row or row["kind"] != expected_kind or row["used_at"]:
+        return {"ok": False, "error": "bad_code"}
+    if row["expires_at"] < _utcnow().isoformat(timespec="seconds"):
+        return {"ok": False, "error": "expired"}
+    if expected_kind == "web":      # код выдал сайт, вводит пользователь Telegram
+        return await link_accounts(web_uid=row["uid"], telegram_id=other_uid, code=row["code"])
+    return await link_accounts(web_uid=other_uid, telegram_id=row["uid"], code=row["code"])
 
 
 async def add_user(user_id: int):
@@ -1395,6 +1528,56 @@ async def get_active_users_count(days: int = 7) -> int:
             "SELECT COUNT(DISTINCT user_id) FROM events WHERE created_at >= ?", (since,)
         ) as cursor:
             return (await cursor.fetchone())[0]
+
+
+SITE_UID_MIN = 10**12   # посетители сайта без Telegram получают случайный id от 13 знаков; Telegram id короче
+
+
+async def get_audience_stats(days_series: int = 14) -> dict:
+    """Сколько людей пользуются ботом и сайтом. Только для администратора.
+
+    users       — все известные пользователи: Telegram, посетители сайта (по cookie), аккаунты сайта, привязанные
+    active      — уникальные пользователи с событиями за сегодня / 7 / 30 дней, с разбивкой бот / сайт
+    new         — новые пользователи за сегодня / 7 / 30 дней
+    daily       — последние N дней: новые и активные за день (для графика)
+    """
+    now = datetime.datetime.now()
+    today = _to_utc_str(now.replace(hour=0, minute=0, second=0, microsecond=0))
+    since = {"today": today, "7d": _to_utc_str(now - datetime.timedelta(days=7)), "30d": _to_utc_str(now - datetime.timedelta(days=30))}
+    out = {"users": {}, "active": {}, "new": {}, "daily": []}
+    async with aiosqlite.connect(DB_NAME) as db:
+        async def one(sql, *params):
+            async with db.execute(sql, params) as cur:
+                return (await cur.fetchone())[0]
+
+        out["users"] = {
+            "total": await one("SELECT COUNT(*) FROM users"),
+            "telegram": await one("SELECT COUNT(*) FROM users WHERE user_id < ?", SITE_UID_MIN),
+            "site": await one("SELECT COUNT(*) FROM users WHERE user_id >= ?", SITE_UID_MIN),
+            "accounts": await one("SELECT COUNT(*) FROM web_accounts"),
+            "linked": await one("SELECT COUNT(*) FROM users WHERE linked_at IS NOT NULL"),
+            "subscribed": await one("SELECT COUNT(*) FROM users WHERE subscribed = 1 AND user_id < ?", SITE_UID_MIN),
+            "with_profile": await one("SELECT COUNT(*) FROM users WHERE ielts IS NOT NULL OR gpa IS NOT NULL OR field_of_interest IS NOT NULL"),
+            "with_favorites": await one("SELECT COUNT(DISTINCT user_id) FROM favorites"),
+        }
+        for key, ts in since.items():
+            out["active"][key] = {
+                "total": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE created_at >= ?", ts),
+                "telegram": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE created_at >= ? AND user_id < ?", ts, SITE_UID_MIN),
+                "site": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE created_at >= ? AND user_id >= ?", ts, SITE_UID_MIN),
+            }
+            out["new"][key] = await one("SELECT COUNT(*) FROM users WHERE joined_at >= ?", ts)
+        # по дням: события и регистрации сгруппированы по дате (UTC)
+        start = _to_utc_str(now - datetime.timedelta(days=days_series - 1)).split(" ")[0]
+        async with db.execute("SELECT substr(created_at, 1, 10) d, COUNT(DISTINCT user_id) FROM events WHERE created_at >= ? GROUP BY d", (start,)) as cur:
+            active_by_day = {r[0]: r[1] for r in await cur.fetchall()}
+        async with db.execute("SELECT substr(joined_at, 1, 10) d, COUNT(*) FROM users WHERE joined_at >= ? GROUP BY d", (start,)) as cur:
+            new_by_day = {r[0]: r[1] for r in await cur.fetchall()}
+    first = datetime.date.fromisoformat(start)
+    for i in range(days_series):
+        d = (first + datetime.timedelta(days=i)).isoformat()
+        out["daily"].append({"date": d, "active": active_by_day.get(d, 0), "new": new_by_day.get(d, 0)})
+    return out
 
 
 # --- Ответы ИИ и фидбек ---

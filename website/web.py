@@ -40,8 +40,10 @@ from core.database import (  # noqa: E402
     get_user_profile, init_db, is_favorite, log_event, remove_favorite, review_grant,
     get_recent_grants, get_all_active_grants,
     save_ai_answer, search_grants, set_answer_rating, set_grant_active, set_user_profile,
+    create_link_code, consume_link_code, get_link_code, get_account_by_id, is_linked, get_audience_stats,
 )
 from core.geo import normalize_country  # noqa: E402
+from core.matching import has_profile, match_grants  # noqa: E402
 
 import aiosqlite  # noqa: E402
 
@@ -58,8 +60,14 @@ UID_COOKIE = "gh_uid"
 UID_MAX_AGE = 3600 * 24 * 365
 
 from website.auth import (  # noqa: E402
-    RateLimit, account_from_request, client_ip, read_uid_cookie, router as auth_router, set_uid_cookie,
+    RateLimit, SESSION_COOKIE, account_from_request, client_ip, read_session, read_uid_cookie, router as auth_router,
+    set_login_cookies, set_uid_cookie,
 )
+
+# Привязка Telegram: имя бота для ссылки t.me/<бот>?start=link_<код>; токен — чтобы сообщить в Telegram о привязке с сайта
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+link_limit = RateLimit(10, 600)   # попыток ввести код с одного IP за 10 минут — коды короткие
 
 SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
 if SENTRY_DSN:  # отслеживание ошибок включается только если задан DSN и установлен пакет sentry-sdk
@@ -310,6 +318,8 @@ async def api_me(request: Request, uid: int = Depends(current_user)):
         "alerts": sorted(await get_open_alert_ids(uid)),
         "reminders": await _reminders_for(uid),
         "admin_enabled": bool(WEB_ADMIN_TOKEN),
+        "telegram_linked": await is_linked(uid),
+        "bot_username": BOT_USERNAME or None,
     }
 
 
@@ -513,44 +523,27 @@ async def api_feedback(data: FeedbackIn, uid: int = Depends(current_user)):
 # ---------------------------------------------------------------------------
 # Публичная статистика для главной
 # ---------------------------------------------------------------------------
-import re as _re  # noqa: E402
+def _match_item(item: dict, favs: set) -> dict:
+    g = item["grant"]
+    return dict(_grant_public(g, g["id"] in favs), why=item["why"], score=item["score"], gaps=item["gaps"])
 
-_IELTS_RE = _re.compile(r"ielts[^0-9]{0,12}(\d(?:[.,]\d)?)", _re.I)
-_GPA_RE = _re.compile(r"gpa[^0-9]{0,12}(\d(?:[.,]\d{1,2})?)", _re.I)
 
-
-def _match_score(g: dict, profile: dict) -> tuple:
-    """Насколько грант подходит профилю: (баллы, причины). Простая эвристика без ИИ."""
-    score, why = 0.0, []
-    text = f"{g['name']} {g['coverage']} {g['requirements']}".lower()
-    field = (profile.get("field_of_interest") or "").strip().lower()
-    if field:
-        words = [w for w in _re.findall(r"[a-zа-яё]{3,}", field) if w not in ("and", "или", "the")]
-        hits = [w for w in words if w in text]
-        if hits:
-            score += 3; why.append("field")
-    ielts = profile.get("ielts")
-    m = _IELTS_RE.search(g["requirements"])
-    if ielts and m:
-        need = float(m.group(1).replace(",", "."))
-        if ielts >= need:
-            score += 2; why.append("ielts_ok")
-        else:
-            score -= 3; why.append("ielts_low")
-    gpa = profile.get("gpa")
-    m = _GPA_RE.search(g["requirements"])
-    if gpa and m:
-        need = float(m.group(1).replace(",", "."))
-        if gpa >= need:
-            score += 1.5; why.append("gpa_ok")
-        else:
-            score -= 2; why.append("gpa_low")
-    if g.get("status") == "open":
-        score += 1; why.append("open")
-    dl = _days_left(g.get("deadline_date"))
-    if dl is not None and 0 <= dl <= 30:
-        score += 0.5
-    return score, why
+@app.get("/api/match")
+async def api_match(uid: int = Depends(current_user), limit: int = Query(default=30, ge=1, le=100)):
+    """«Мне подходит»: гранты под профиль. near — не хватает одного показателя (IELTS или GPA)."""
+    profile = await get_user_profile(uid)
+    favs = await _favorite_ids(uid)
+    filled = has_profile(profile)
+    if not filled:
+        return {"has_profile": False, "profile": profile, "items": [], "near": [], "total": 0, "strong": 0}
+    result = match_grants(await get_all_active_grants(), profile)
+    await log_event(uid, "match_view")
+    return {
+        "has_profile": True, "profile": profile,
+        "items": [_match_item(i, favs) for i in result["matches"][:limit]],
+        "near": [_match_item(i, favs) for i in result["near"][:10]],
+        "total": len(result["matches"]), "strong": sum(1 for i in result["matches"] if i["score"] >= 3),
+    }
 
 
 @app.get("/api/home")
@@ -559,21 +552,19 @@ async def api_home(request: Request, uid: int = Depends(current_user)):
     profile = await get_user_profile(uid)
     favs = await _favorite_ids(uid)
     grants = await get_all_active_grants()
-    has_profile = any(profile.get(k) for k in ("ielts", "gpa", "field_of_interest"))
-    scored = []
-    for g in grants:
-        sc, why = _match_score(g, profile) if has_profile else (0, [])
-        if "ielts_low" in why or "gpa_low" in why:
-            continue
-        scored.append((sc, g, why))
-    scored.sort(key=lambda x: (-x[0], x[1].get("deadline_date") or "9999"))
-    matches = [dict(_grant_public(g, g["id"] in favs), why=why, score=sc) for sc, g, why in scored[:6]]
-    strong = sum(1 for sc, _, _ in scored if sc >= 3)
+    filled = has_profile(profile)
+    if filled:
+        ranked = match_grants(grants, profile)["matches"]
+    else:
+        ranked = [{"grant": g, "score": 0, "why": [], "gaps": {}} for g in grants]
+    matches = [_match_item(i, favs) for i in ranked[:6]]
+    strong = sum(1 for i in ranked if i["score"] >= 3)
+    has_profile_flag = filled
     upcoming = sorted([g for g in grants if g.get("deadline_date") and (_days_left(g["deadline_date"]) or -1) >= 0],
                       key=lambda g: g["deadline_date"])[:5]
     fav_upcoming = [g for g in upcoming if g["id"] in favs]
     completeness = round(100 * sum(1 for k in ("ielts", "gpa", "field_of_interest") if profile.get(k)) / 3)
-    if not has_profile:
+    if not has_profile_flag:
         tip = "profile"
     elif not favs:
         tip = "favorites"
@@ -585,11 +576,96 @@ async def api_home(request: Request, uid: int = Depends(current_user)):
     return {
         "account": {"name": account.get("name") or (account.get("email") or "").split("@")[0]} if account else None,
         "profile": {k: profile.get(k) for k in ("ielts", "gpa", "field_of_interest")}, "completeness": completeness,
-        "matches": matches, "strong_matches": strong if has_profile else None, "total_active": len(grants),
+        "matches": matches, "strong_matches": strong if has_profile_flag else None, "total_active": len(grants),
         "upcoming": [_grant_public(g, g["id"] in favs) for g in (fav_upcoming or upcoming)[:4]],
         "upcoming_is_favorites": bool(fav_upcoming), "favorites_count": len(favs), "tip": tip,
         "scan": {**ai_scanner.scan_progress, "last": ai_scanner.last_scan_stats.get("finished_at")},
     }
+
+
+# ---------------------------------------------------------------------------
+# Привязка Telegram и сайта: один аккаунт, общее избранное и профиль
+# ---------------------------------------------------------------------------
+class LinkCodeIn(BaseModel):
+    code: str = Field(min_length=4, max_length=12)
+
+
+_LINK_ERRORS = {
+    "bad_code": (400, "Код не найден или уже использован. Запроси новый в боте командой /link."),
+    "expired": (400, "Код устарел — он живёт 10 минут. Запроси новый."),
+    "same": (400, "Это уже один и тот же аккаунт."),
+    "web_linked": (409, "К этому аккаунту сайта уже привязан Telegram."),
+    "tg_taken": (409, "К этому Telegram уже привязан другой аккаунт сайта. Войди в него или напиши администратору."),
+}
+
+
+async def _apply_linked_cookies(request: Request, response: Response, new_uid: int):
+    """После привязки посетитель продолжает работать уже под Telegram id.
+
+    У вошедшего пользователя uid аккаунта только что сменился, поэтому старая сессия уже не проходит
+    проверку account_from_request — берём id аккаунта прямо из подписанной cookie и выдаём новую сессию.
+    """
+    sess = read_session(request.cookies.get(SESSION_COOKIE, ""))
+    if sess:
+        fresh = await get_account_by_id(sess[0])
+        if fresh and fresh["uid"] == new_uid:
+            set_login_cookies(response, fresh)
+            return
+    set_uid_cookie(response, new_uid, UID_MAX_AGE)
+
+
+async def _notify_telegram(chat_id: int, text: str):
+    """Сообщение в Telegram от имени бота (сайт и бот делят один BOT_TOKEN). Ошибки не критичны."""
+    if not BOT_TOKEN:
+        return
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
+            await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                               json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+    except Exception as e:  # noqa: BLE001
+        logging.warning(f"Не удалось сообщить в Telegram о привязке: {e}")
+
+
+@app.post("/api/link/code")
+async def api_link_code(request: Request, uid: int = Depends(current_user)):
+    """Код для ввода в боте (/link КОД) или ссылка t.me/бот?start=link_КОД."""
+    if await is_linked(uid):
+        raise HTTPException(409, "Telegram уже привязан.")
+    if not link_limit.hit(client_ip(request)):
+        raise HTTPException(429, "Слишком много запросов. Подожди немного.")
+    info = await create_link_code("web", uid)
+    return {**info, "bot_username": BOT_USERNAME or None,
+            "bot_url": f"https://t.me/{BOT_USERNAME}?start=link_{info['code']}" if BOT_USERNAME else None}
+
+
+@app.get("/api/link/status")
+async def api_link_status(request: Request, response: Response, code: str = Query(min_length=4, max_length=12),
+                          uid: int = Depends(current_user)):
+    """Сайт опрашивает: бот уже принял код? Если да — cookie переезжают на Telegram id."""
+    row = await get_link_code(code)
+    if not row or row["kind"] != "web" or uid not in (row["uid"], row["linked_uid"]):
+        return {"linked": False, "expired": True}
+    if not row["used_at"]:
+        return {"linked": False, "expired": row["expires_at"] < datetime.datetime.utcnow().isoformat(timespec="seconds")}
+    await _apply_linked_cookies(request, response, row["linked_uid"])
+    return {"linked": True, "expired": False}
+
+
+@app.post("/api/link/confirm")
+async def api_link_confirm(data: LinkCodeIn, request: Request, response: Response, uid: int = Depends(current_user)):
+    """Пользователь ввёл на сайте код, который выдал бот (/link)."""
+    if not link_limit.hit(client_ip(request)):
+        raise HTTPException(429, "Слишком много попыток. Подожди 10 минут.")
+    result = await consume_link_code(data.code, "tg", uid)
+    if not result["ok"]:
+        status, text = _LINK_ERRORS.get(result["error"], (400, "Не удалось привязать."))
+        raise HTTPException(status, text)
+    await _apply_linked_cookies(request, response, result["uid"])
+    await log_event(result["uid"], "telegram_linked", {"from": "web"})
+    await _notify_telegram(result["uid"], "✅ <b>Сайт GrantHub привязан к этому Telegram.</b>\n"
+                                          "Избранное, профиль и напоминания теперь общие — и здесь, и в браузере.")
+    return {"linked": True}
 
 
 @app.get("/api/recent-grants")
@@ -688,7 +764,7 @@ async def api_admin_monitor(_: bool = Depends(require_admin)):
 @app.get("/api/admin/stats")
 async def api_admin_stats(_: bool = Depends(require_admin)):
     return {"events": await get_events_summary(days=7), "active_users": await get_active_users_count(days=7),
-            "users_total": len(await get_all_users())}
+            "users_total": len(await get_all_users()), "audience": await get_audience_stats()}
 
 
 @app.get("/api/admin/llm")

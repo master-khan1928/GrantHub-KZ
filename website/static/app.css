@@ -622,3 +622,36 @@ html::-webkit-scrollbar { display: none; width: 0; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   .gcard { opacity: 1; transform: none; }
 }
+
+/* ---------- «Мне подходит» ---------- */
+.match-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 6px 0 22px; }
+.match-summary .tile b { font-size: 28px; }
+.tag.gap { color: #fca5a5; border-color: rgba(239,68,68,.4); }
+#matchNearHead { margin-top: 30px; flex-wrap: wrap; gap: 6px 14px; }
+/* ---------- Привязка Telegram ---------- */
+.tg-card { margin-top: 26px; position: relative; z-index: 1; }
+.tg-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 18px; }
+.tg-head h3 { margin: 0 0 4px; }
+.tg-head p { margin: 0; }
+.tg-ico { flex: none; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: rgba(42,171,238,.14); border: 1px solid rgba(42,171,238,.35); color: #2aabee; }
+.tg-ico svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.tg-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.tg-col { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 16px; border: 1px solid var(--border); background: rgba(255,255,255,.03); }
+.tg-col p { margin: 0; }
+.tg-col .btn { align-self: flex-start; }
+.tg-codebox { display: flex; flex-direction: column; gap: 10px; }
+.tg-code { font-size: 30px; letter-spacing: .3em; font-weight: 500; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,.06); border: 1px dashed var(--border); align-self: flex-start; user-select: all; }
+.tg-ok { margin: 0; color: var(--online); }
+#tgInput { text-transform: uppercase; letter-spacing: .15em; }
+@media (max-width: 760px) { .match-summary, .tg-cols { grid-template-columns: 1fr; } }
+
+/* ---------- Аудитория (админ) ---------- */
+.stat small { display: block; margin-top: 4px; font-size: .72rem; color: var(--muted-fg); }
+.aud-chart { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; align-items: end; height: 120px; margin-top: 18px; padding-top: 8px; border-top: 1px solid var(--border); }
+.aud-col { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; height: 100%; font-size: 10px; color: var(--muted-fg); }
+.aud-bars { display: flex; gap: 2px; align-items: flex-end; flex: 1; width: 100%; justify-content: center; }
+.aud-bars i { display: block; width: 40%; border-radius: 4px 4px 0 0; min-height: 2px; }
+.aud-bars .a { background: var(--brand); }
+.aud-bars .n { background: rgba(42,171,238,.8); }
+.aud-legend { display: flex; gap: 16px; margin-top: 8px; font-size: .75rem; color: var(--muted-fg); }
+.aud-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }

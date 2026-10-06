@@ -11,7 +11,9 @@
   // ---------- Переводы статичных элементов (selector -> key) ----------
   const TEXT = {
     '#nav a[data-nav="home"]': 'nav.homeapp', '#nav a[data-nav="catalog"]': 'nav.catalog', '#nav a[data-nav="search"]': 'nav.search',
-    '#nav a[data-nav="chat"]': 'nav.chat', '#nav a[data-nav="profile"]': 'nav.profile', '#adminNav': 'nav.admin',
+    '#nav a[data-nav="chat"]': 'nav.chat', '#nav a[data-nav="profile"]': 'nav.profile', '#adminNav': 'nav.admin', '#nav a[data-nav="match"]': 'nav.match',
+    '[data-view="match"] .eyebrow': 'match.eyebrow', '[data-view="match"] .vlead': 'match.lead', '#matchNearTitle': 'match.nearTitle', '#matchNearSub': 'match.nearSub',
+    '#tgTitle': 'tg.title', '#tgWay1': 'tg.way1', '#tgGetCode': 'tg.get', '#tgOpenBot': 'tg.open', '#tgWay2': 'tg.way2', '#tgConfirm': 'tg.confirm', '#tgLinkedText': 'tg.linked',
     '.topbar-actions .pill--white': 'pill.ask', '#loginBtn': 'login',
     '[data-view="catalog"] .eyebrow': 'catalog.results', '[data-view="catalog"] .vlead': 'catalog.lead',
     '[data-region="kz"] b': 'choice.kz', '[data-region="kz"] > span:nth-of-type(2)': 'choice.kz.desc',
@@ -30,7 +32,7 @@
   };
   const HTML = {
     '[data-view="catalog"] .vtitle': 'catalog.titleAll', '[data-view="search"] .vtitle': 'search.title', '[data-view="favorites"] .vtitle': 'fav.title',
-    '[data-view="chat"] .vtitle': 'chat.title', '[data-view="profile"] .vtitle': 'profile.title', '[data-view="admin"] .vtitle': 'admin.title',
+    '[data-view="chat"] .vtitle': 'chat.title', '[data-view="profile"] .vtitle': 'profile.title', '[data-view="admin"] .vtitle': 'admin.title', '[data-view="match"] .vtitle': 'match.title',
     '.bullets li:nth-child(1)': 'profile.b1', '.bullets li:nth-child(2)': 'profile.b2', '.bullets li:nth-child(3)': 'profile.b3', '.footer > span:first-child': 'foot.words',
   };
   const PH = { '#searchInput': 'search.placeholder', '#chatInput': 'chat.placeholder', '#profileForm input[name="ielts"]': 'profile.ielts.ph', '#profileForm input[name="gpa"]': 'profile.gpa.ph', '#profileForm input[name="field_of_interest"]': 'profile.field.ph', '#authForm input[name="name"]': 'auth.name.ph', '#authForm input[name="password"]': 'auth.password.ph' };
@@ -72,6 +74,7 @@
     view: 'home', region: 'all', degree: 'all', cursor: null, shown: 0, total: 0, favIds: new Set(),
     filters: { country: '', funding: '', deadline: '', req: '' }, sort: 'new', countries: [], searchScope: 'all', alertIds: new Set(),
     adminToken: localStorage.getItem('gh_admin') || '', scanTimer: null, profile: {}, compare: new Set(), grants: new Map(),
+    telegramLinked: false, botUsername: null, linkTimer: null,
   };
 
   // ---------- Toasts ----------
@@ -130,7 +133,9 @@
     if (name === 'home') loadHome();
     if (name === 'catalog') loadCatalog(true);
     if (name === 'favorites') loadFavorites();
-    if (name === 'profile') fillProfile();
+    if (name === 'match') loadMatch();
+    if (name === 'profile') { fillProfile(); renderTelegram(); }
+    if (name !== 'profile' && state.linkTimer) { clearInterval(state.linkTimer); state.linkTimer = null; }
     if (name === 'search') setTimeout(() => $('#searchInput').focus(), 300);
     if (name === 'chat') setTimeout(() => $('#chatInput').focus(), 300);
     if (name === 'admin' && state.adminToken) adminEnter();
@@ -225,7 +230,7 @@
     <article class="gcard" data-id="${g.id}" style="--i:${i}">
       <div class="g-head"><span class="g-src" title="${esc(placeOf(g))}">${esc(placeOf(g))}</span>${flagOf(g)}</div>
       <div class="g-main"><h3 class="g-title"><a href="/grant/${g.id}">${esc(g.name)}</a></h3>${deadlineBlock(g)}</div>
-      <div class="g-tags"><span class="tag">${degreeLabel[g.degree] || g.degree}</span>${statusTag(g)}${urgentTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}</div>
+      <div class="g-tags"><span class="tag">${degreeLabel[g.degree] || g.degree}</span>${statusTag(g)}${urgentTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}${Object.entries(g.gaps || {}).map(([k, n]) => `<span class="tag gap">${t('gap.' + k, { n })}</span>`).join('')}</div>
       <div class="g-row">${icon.money}<div><b>${t('card.coverage')}:</b> ${esc(g.coverage)}</div></div>
       <div class="g-row">${icon.list}<div><b>${t('card.requirements')}:</b> ${esc(g.requirements)}</div></div>
       <div class="g-foot">
@@ -442,6 +447,66 @@
     catch (err) { toast(err.message, 'err'); }
   });
 
+  // ---------- «Мне подходит» ----------
+  const loadMatch = async () => {
+    const grid = $('#matchGrid'), near = $('#matchNearGrid'), empty = $('#matchEmpty'), sum = $('#matchSummary');
+    skeletons(grid, 3); near.innerHTML = ''; empty.hidden = true; sum.hidden = true; $('#matchNearHead').hidden = true;
+    try {
+      const d = await api('/api/match');
+      grid.innerHTML = '';
+      if (!d.has_profile) {
+        $('#matchEmptyText').textContent = t('match.empty'); const b = $('#matchEmptyBtn'); b.textContent = t('match.emptyBtn'); b.dataset.nav = 'profile'; b.href = '#profile';
+        empty.hidden = false; return;
+      }
+      sum.hidden = false;
+      sum.innerHTML = [[d.total, t('match.total'), 'brand'], [d.strong, t('match.strong')], [d.near.length, t('match.near')]]
+        .map(([v, l, cls]) => `<div class="tile"><b class="${cls || ''}">${v}</b><span>${l}</span></div>`).join('');
+      if (!d.items.length) {
+        $('#matchEmptyText').textContent = t('match.none'); const b = $('#matchEmptyBtn'); b.textContent = t('match.noneBtn'); b.dataset.nav = 'catalog'; b.href = '#catalog';
+        empty.hidden = false;
+      } else renderGrid(grid, d.items);
+      if (d.near.length) { $('#matchNearHead').hidden = false; renderGrid(near, d.near); }
+    } catch (err) { grid.innerHTML = ''; toast(err.message, 'err'); }
+  };
+
+  // ---------- Привязка Telegram (карточка в профиле) ----------
+  const renderTelegram = () => {
+    const bot = state.botUsername;
+    $('#tgLead').textContent = bot ? t('tg.lead', { bot }) : t('tg.leadNoBot');
+    $('#tgLinked').hidden = !state.telegramLinked; $('#tgUnlinked').hidden = state.telegramLinked;
+  };
+  const afterLinked = async () => {
+    if (state.linkTimer) { clearInterval(state.linkTimer); state.linkTimer = null; }
+    state.telegramLinked = true; renderTelegram(); toast(t('tg.done'), 'ok');
+    try {
+      const me = await api('/api/me'); state.profile = me.profile || {}; state.alertIds = new Set(me.alerts || []); fillProfile();
+      const favs = await api('/api/favorites'); state.favIds = new Set(favs.items.map(g => g.id)); updateFavBadge(); loadReminders();
+    } catch { }
+  };
+  $('#tgGetCode').addEventListener('click', async () => {
+    const btn = $('#tgGetCode'); btn.disabled = true;
+    try {
+      const d = await api('/api/link/code', { method: 'POST' });
+      $('#tgCode').textContent = d.code; $('#tgCodeHint').textContent = t('tg.hint'); $('#tgCodeBox').hidden = false;
+      const a = $('#tgOpenBot'); if (d.bot_url) { a.href = d.bot_url; a.hidden = false; } else a.hidden = true;
+      if (state.linkTimer) clearInterval(state.linkTimer);
+      state.linkTimer = setInterval(async () => {
+        try {
+          const s = await api(`/api/link/status?code=${encodeURIComponent(d.code)}`);
+          if (s.linked) { $('#tgCodeBox').hidden = true; await afterLinked(); }
+          else if (s.expired) { clearInterval(state.linkTimer); state.linkTimer = null; $('#tgCodeHint').textContent = t('tg.expired'); btn.disabled = false; }
+        } catch { }
+      }, 3000);
+    } catch (err) { toast(err.message, 'err'); btn.disabled = false; }
+  });
+  $('#tgForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); const code = $('#tgInput').value.trim().toUpperCase(); if (!code) return;
+    $('#tgConfirm').disabled = true;
+    try { await api('/api/link/confirm', { method: 'POST', body: { code } }); $('#tgInput').value = ''; await afterLinked(); }
+    catch (err) { toast(err.message, 'err'); }
+    finally { $('#tgConfirm').disabled = false; }
+  });
+
   // ---------- Chat ----------
   const log = $('#chatLog'), input = $('#chatInput'), sendBtn = $('#sendBtn');
   // Markdown -> HTML с очисткой: оставляем только безопасные теги, ссылки только http(s)
@@ -588,11 +653,29 @@
          <p class="muted" style="margin:8px 0 0">Расписание: ежедневно в ${m.scan_hours.map(h => String(h).padStart(2, '0') + ':00').join(', ')} (${esc(m.timezone)})</p>`
       : 'Ещё ни одного сканирования не было. Запустите его кнопкой выше.';
   };
-  const labels = { start: 'Запусков', browse_catalog: 'Просмотров каталога', favorite_add: 'В избранное', favorite_remove: 'Из избранного', ai_question: 'Вопросов к ИИ', ai_feedback: 'Оценок ответов', unsubscribe: 'Отписок', manual_scan: 'Ручных сканирований', search: 'Поисковых запросов', profile_saved: 'Сохранений профиля' };
+  const labels = { start: 'Запусков', browse_catalog: 'Просмотров каталога', favorite_add: 'В избранное', favorite_remove: 'Из избранного', ai_question: 'Вопросов к ИИ', ai_feedback: 'Оценок ответов', unsubscribe: 'Отписок', manual_scan: 'Ручных сканирований', search: 'Поисковых запросов', profile_saved: 'Сохранений профиля', match_view: 'Просмотров подбора', telegram_linked: 'Привязок Telegram' };
   const renderStats = (s) => {
     const items = [`<div class="stat"><b>${s.active_users}</b><span>Активных пользователей</span></div>`, `<div class="stat"><b>${s.users_total}</b><span>Всего пользователей</span></div>`]
       .concat(Object.entries(s.events).map(([k, v]) => `<div class="stat"><b>${v}</b><span>${labels[k] || k}</span></div>`));
     $('#statsInfo').innerHTML = items.join('');
+    if (s.audience) renderAudience(s.audience);
+  };
+  const renderAudience = (a) => {
+    const u = a.users, act = a.active, nw = a.new;
+    const stat = (v, label, sub = '') => `<div class="stat"><b>${v}</b><span>${label}</span>${sub ? `<small>${sub}</small>` : ''}</div>`;
+    $('#audienceInfo').innerHTML = [
+      stat(u.total, 'Всего людей', `Telegram ${u.telegram} · сайт ${u.site}`),
+      stat(act.today.total, 'Активны сегодня', `бот ${act.today.telegram} · сайт ${act.today.site}`),
+      stat(act['7d'].total, 'Активны за 7 дней', `бот ${act['7d'].telegram} · сайт ${act['7d'].site}`),
+      stat(act['30d'].total, 'Активны за 30 дней', `бот ${act['30d'].telegram} · сайт ${act['30d'].site}`),
+      stat(nw.today, 'Новых сегодня', `за 7 дней ${nw['7d']} · за 30 дней ${nw['30d']}`),
+      stat(u.accounts, 'Аккаунтов на сайте', `привязано к Telegram ${u.linked}`),
+      stat(u.subscribed, 'Подписаны на рассылку', 'пользователи бота'),
+      stat(u.with_profile, 'Заполнили профиль', `с избранным ${u.with_favorites}`),
+    ].join('');
+    const max = Math.max(1, ...a.daily.map(d => Math.max(d.active, d.new)));
+    $('#audienceChart').innerHTML = a.daily.map(d => `<div class="aud-col" title="${d.date}: активных ${d.active}, новых ${d.new}"><div class="aud-bars"><i class="a" style="height:${Math.round(100 * d.active / max)}%"></i><i class="n" style="height:${Math.round(100 * d.new / max)}%"></i></div><span>${d.date.slice(8)}</span></div>`).join('')
+      + `<div class="aud-legend" style="grid-column:1/-1"><span><i style="background:var(--brand)"></i>активных за день</span><span><i style="background:rgba(42,171,238,.8)"></i>новых за день</span></div>`;
   };
   const renderScan = (s) => {
     const status = $('#scanStatus'), prog = $('#scanProgress'), res = $('#scanResult'), btn = $('#scanBtn');
@@ -658,13 +741,15 @@
       toast(authMode === 'register' ? t('auth.welcome', { name: d.user.name }) : t('auth.back', { name: d.user.name }), 'ok');
       const favs = await api('/api/favorites'); state.favIds = new Set(favs.items.map(g => g.id)); updateFavBadge();
       const me = await api('/api/me'); state.profile = me.profile || {}; state.alertIds = new Set(me.alerts || []);
+      state.telegramLinked = !!me.telegram_linked; if (state.view === 'profile') renderTelegram();
       if (state.view === 'favorites') loadFavorites();
     } catch (err) { toast(err.message, 'err'); }
     finally { $('#authSubmit').disabled = false; }
   });
   $('#logoutBtn').addEventListener('click', async () => {
     try { await api('/api/auth/logout', { method: 'POST' }); } catch { }
-    renderUser(null); state.favIds = new Set(); updateFavBadge(); state.profile = {}; toast(t('auth.out'));
+    renderUser(null); state.favIds = new Set(); updateFavBadge(); state.profile = {}; state.telegramLinked = false; toast(t('auth.out'));
+    if (state.view === 'profile') renderTelegram();
     if (state.view === 'favorites') loadFavorites();
   });
   if (location.hash === '#auth') { history.replaceState(null, '', location.pathname + '#home'); setTimeout(() => openAuth('login'), 400); }
@@ -707,7 +792,7 @@
   const NAV_ITEMS = () => [
     { ico: ui.home, label: t('nav.homeapp'), run: () => show('home') }, { ico: ui.book, label: t('nav.catalog'), run: () => show('catalog') },
     { ico: ui.search, label: t('nav.search'), run: () => show('search') }, { ico: ui.star, label: t('nav.favorites'), run: () => show('favorites') },
-    { ico: ui.chat, label: t('nav.chat'), run: () => show('chat') }, { ico: ui.user, label: t('nav.profile'), run: () => show('profile') },
+    { ico: ui.chat, label: t('nav.chat'), run: () => show('chat') }, { ico: ui.user, label: t('nav.profile'), run: () => show('profile') }, { ico: ui.star, label: t('nav.match'), run: () => show('match') },
     { ico: ui.theme, label: t('palette.theme'), run: () => $('#themeToggle').click() },
     { ico: ui.lang, label: t('palette.lang') + ' · Рус', run: () => I.setLang('ru') }, { ico: ui.lang, label: t('palette.lang') + ' · Қаз', run: () => I.setLang('kz') }, { ico: ui.lang, label: t('palette.lang') + ' · Eng', run: () => I.setLang('en') },
   ];
@@ -774,6 +859,7 @@
     try {
       const me = await api('/api/me');
       state.profile = me.profile || {}; state.alertIds = new Set(me.alerts || []);
+      state.telegramLinked = !!me.telegram_linked; state.botUsername = me.bot_username || null;
       renderUser(me.account);
       const favs = await api('/api/favorites'); favs.items.forEach(g => state.favIds.add(g.id)); updateFavBadge();
       $('#adminNav').hidden = !me.admin_enabled;
