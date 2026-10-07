@@ -1,5 +1,6 @@
 /* ============ GrantHub landing — dark luxury, ultra-minimal ============ */
 :root {
+  color-scheme: dark; /* сайт сам тёмный: браузеру не нужно затемнять его принудительно */
   --ink: #050505;
   --white: #ffffff;
   --gray-1: #a1a1aa;

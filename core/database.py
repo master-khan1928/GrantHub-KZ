@@ -1544,7 +1544,7 @@ async def get_audience_stats(days_series: int = 14) -> dict:
     now = datetime.datetime.now()
     today = _to_utc_str(now.replace(hour=0, minute=0, second=0, microsecond=0))
     since = {"today": today, "7d": _to_utc_str(now - datetime.timedelta(days=7)), "30d": _to_utc_str(now - datetime.timedelta(days=30))}
-    out = {"users": {}, "active": {}, "new": {}, "daily": []}
+    out = {"users": {}, "active": {}, "new": {}, "funnel": {}, "daily": [], "recent": []}
     async with aiosqlite.connect(DB_NAME) as db:
         async def one(sql, *params):
             async with db.execute(sql, params) as cur:
@@ -1567,12 +1567,37 @@ async def get_audience_stats(days_series: int = 14) -> dict:
                 "site": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE created_at >= ? AND user_id >= ?", ts, SITE_UID_MIN),
             }
             out["new"][key] = await one("SELECT COUNT(*) FROM users WHERE joined_at >= ?", ts)
+            # воронка: кто зашёл на сайт, кто пришёл из бота, кто зарегистрировался / вошёл, кто нажал «сайт» в боте
+            out["funnel"][key] = {
+                "visitors": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE event_type = 'web_visit' AND created_at >= ?", ts),
+                "visits": await one("SELECT COUNT(*) FROM events WHERE event_type = 'web_visit' AND created_at >= ?", ts),
+                "from_bot": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE event_type = 'web_visit' AND payload LIKE '%\"from\": \"bot\"%' AND created_at >= ?", ts),
+                "site_open": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE event_type = 'site_open' AND created_at >= ?", ts),
+                "registered": await one("SELECT COUNT(*) FROM events WHERE event_type = 'register' AND created_at >= ?", ts),
+                "logins": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE event_type = 'login' AND created_at >= ?", ts),
+                "bot_starts": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE event_type = 'start' AND created_at >= ?", ts),
+            }
         # по дням: события и регистрации сгруппированы по дате (UTC)
         start = _to_utc_str(now - datetime.timedelta(days=days_series - 1)).split(" ")[0]
         async with db.execute("SELECT substr(created_at, 1, 10) d, COUNT(DISTINCT user_id) FROM events WHERE created_at >= ? GROUP BY d", (start,)) as cur:
             active_by_day = {r[0]: r[1] for r in await cur.fetchall()}
         async with db.execute("SELECT substr(joined_at, 1, 10) d, COUNT(*) FROM users WHERE joined_at >= ? GROUP BY d", (start,)) as cur:
             new_by_day = {r[0]: r[1] for r in await cur.fetchall()}
+        # кто заходил последним: последние события «вход / регистрация / заход / переход», по одному на пользователя
+        async with db.execute(
+            """SELECT e.user_id, e.event_type, e.payload, MAX(e.created_at) AS t, u.linked_at IS NOT NULL, a.email
+               FROM events e LEFT JOIN users u ON u.user_id = e.user_id LEFT JOIN web_accounts a ON a.uid = e.user_id
+               WHERE e.event_type IN ('web_visit', 'register', 'login', 'site_open', 'start', 'telegram_linked')
+               GROUP BY e.user_id ORDER BY t DESC LIMIT 25"""
+        ) as cur:
+            for uid, et, payload, t, linked, email in await cur.fetchall():
+                src = "telegram" if uid < SITE_UID_MIN else "site"
+                try:
+                    came_from = (json.loads(payload) or {}).get("from") if payload else None
+                except ValueError:
+                    came_from = None
+                out["recent"].append({"user_id": uid, "source": src, "event": et, "from": came_from, "at": t,
+                                      "linked": bool(linked), "email": email})
     first = datetime.date.fromisoformat(start)
     for i in range(days_series):
         d = (first + datetime.timedelta(days=i)).isoformat()

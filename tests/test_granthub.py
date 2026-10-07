@@ -5,6 +5,7 @@
 import asyncio
 import datetime
 import os
+import random
 import sqlite3
 import sys
 import tempfile
@@ -317,6 +318,30 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(a["users"]["total"], a["users"]["telegram"] + a["users"]["site"])
         self.assertEqual(len(a["daily"]), 14)
         self.assertGreaterEqual(a["daily"][-1]["active"], 1)
+
+    def test_funnel_visits_and_registrations(self):
+        from fastapi.testclient import TestClient
+        from website.web import app
+        fresh = TestClient(app)                                   # новый посетитель без cookie
+        r = fresh.get("/?from=bot")                               # заход на лендинг по ссылке из бота
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("gh_uid", r.cookies)                        # новому посетителю выдана cookie вместе со страницей
+        r = self.client.get("/?from=bot")
+        self.assertEqual(r.status_code, 200)
+        self.client.get("/app")
+        email = f"funnel{random.randint(1, 10**6)}@test.kz"
+        self.assertEqual(self.client.post("/api/auth/register", json={"email": email, "password": "secret123", "name": "F"}).status_code, 200)
+        self.client.post("/api/auth/logout")
+        self.assertEqual(self.client.post("/api/auth/login", json={"email": email, "password": "secret123"}).status_code, 200)
+        a = self.client.get("/api/admin/stats", headers={"X-Admin-Token": "test-token"}).json()["audience"]
+        f = a["funnel"]["today"]
+        self.assertGreaterEqual(f["visitors"], 1)
+        self.assertGreaterEqual(f["from_bot"], 1)
+        self.assertGreaterEqual(f["registered"], 1)
+        self.assertGreaterEqual(f["logins"], 1)
+        events = {r["event"] for r in a["recent"]}
+        self.assertTrue({"login", "register"} & events)
+        self.assertTrue(any(r["email"] == email for r in a["recent"]))
 
     def test_admin_rate_limit_and_health(self):
         self.assertEqual(self.client.get("/healthz").json()["db"], True)

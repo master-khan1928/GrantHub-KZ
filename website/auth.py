@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from core.database import (
-    create_account, get_account_by_email, get_account_by_id, merge_anonymous_user, touch_account_login,
+    create_account, get_account_by_email, get_account_by_id, merge_anonymous_user, touch_account_login, log_event,
 )
 
 router = APIRouter()
@@ -210,6 +210,7 @@ async def auth_register(data: RegisterIn, request: Request, response: Response):
                                    name=(data.name or "").strip() or email.split("@")[0],
                                    password_hash=hash_password(data.password))
     set_login_cookies(response, account)
+    await log_event(account["uid"], "register", {"provider": "email"})
     return {"user": _public(account)}
 
 
@@ -224,6 +225,7 @@ async def auth_login(data: LoginIn, request: Request, response: Response):
     await merge_anonymous_user(_anon_uid(request), account["uid"])
     await touch_account_login(account["id"])
     set_login_cookies(response, account)
+    await log_event(account["uid"], "login", {"provider": "email"})
     return {"user": _public(account)}
 
 

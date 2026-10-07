@@ -653,7 +653,7 @@
          <p class="muted" style="margin:8px 0 0">Расписание: ежедневно в ${m.scan_hours.map(h => String(h).padStart(2, '0') + ':00').join(', ')} (${esc(m.timezone)})</p>`
       : 'Ещё ни одного сканирования не было. Запустите его кнопкой выше.';
   };
-  const labels = { start: 'Запусков', browse_catalog: 'Просмотров каталога', favorite_add: 'В избранное', favorite_remove: 'Из избранного', ai_question: 'Вопросов к ИИ', ai_feedback: 'Оценок ответов', unsubscribe: 'Отписок', manual_scan: 'Ручных сканирований', search: 'Поисковых запросов', profile_saved: 'Сохранений профиля', match_view: 'Просмотров подбора', telegram_linked: 'Привязок Telegram' };
+  const labels = { start: 'Запусков', browse_catalog: 'Просмотров каталога', favorite_add: 'В избранное', favorite_remove: 'Из избранного', ai_question: 'Вопросов к ИИ', ai_feedback: 'Оценок ответов', unsubscribe: 'Отписок', manual_scan: 'Ручных сканирований', search: 'Поисковых запросов', profile_saved: 'Сохранений профиля', match_view: 'Просмотров подбора', telegram_linked: 'Привязок Telegram', web_visit: 'Заходов на сайт', register: 'Регистраций', login: 'Входов в аккаунт' };
   const renderStats = (s) => {
     const items = [`<div class="stat"><b>${s.active_users}</b><span>Активных пользователей</span></div>`, `<div class="stat"><b>${s.users_total}</b><span>Всего пользователей</span></div>`]
       .concat(Object.entries(s.events).map(([k, v]) => `<div class="stat"><b>${v}</b><span>${labels[k] || k}</span></div>`));
@@ -673,6 +673,18 @@
       stat(u.subscribed, 'Подписаны на рассылку', 'пользователи бота'),
       stat(u.with_profile, 'Заполнили профиль', `с избранным ${u.with_favorites}`),
     ].join('');
+    const f = a.funnel, tri = (k) => `${f.today[k]} · ${f['7d'][k]} · ${f['30d'][k]}`;
+    $('#funnelInfo').innerHTML = [
+      stat(f['7d'].visitors, 'Заходили на сайт', `сегодня · 7 дн · 30 дн: ${tri('visitors')}`),
+      stat(f['7d'].from_bot, 'Пришли из бота', tri('from_bot')),
+      stat(f['7d'].site_open, 'Нажали «сайт» в боте', tri('site_open')),
+      stat(f['7d'].registered, 'Зарегистрировались', tri('registered')),
+      stat(f['7d'].logins, 'Входили в аккаунт', tri('logins')),
+      stat(f['7d'].bot_starts, 'Запускали бота', tri('bot_starts')),
+    ].join('');
+    const evLabel = { web_visit: 'зашёл на сайт', register: 'зарегистрировался', login: 'вошёл', site_open: 'открыл ссылку на сайт', start: 'запустил бота', telegram_linked: 'привязал Telegram' };
+    $('#recentInfo').innerHTML = a.recent.length ? `<table class="recent"><thead><tr><th>Когда</th><th>Кто</th><th>Откуда</th><th>Что сделал</th></tr></thead><tbody>` + a.recent.map(r =>
+      `<tr><td>${esc(r.at.slice(5, 16))}</td><td>${r.email ? esc(r.email) : (r.source === 'telegram' ? 'tg ' : 'web ') + r.user_id}${r.linked ? ' <span class="tag">связан</span>' : ''}</td><td>${r.source === 'telegram' ? 'Telegram' : 'сайт'}${r.from === 'bot' ? ' ← бот' : ''}</td><td>${evLabel[r.event] || esc(r.event)}</td></tr>`).join('') + '</tbody></table>' : '<p class="muted small">Пока никто не заходил.</p>';
     const max = Math.max(1, ...a.daily.map(d => Math.max(d.active, d.new)));
     $('#audienceChart').innerHTML = a.daily.map(d => `<div class="aud-col" title="${d.date}: активных ${d.active}, новых ${d.new}"><div class="aud-bars"><i class="a" style="height:${Math.round(100 * d.active / max)}%"></i><i class="n" style="height:${Math.round(100 * d.new / max)}%"></i></div><span>${d.date.slice(8)}</span></div>`).join('')
       + `<div class="aud-legend" style="grid-column:1/-1"><span><i style="background:var(--brand)"></i>активных за день</span><span><i style="background:rgba(42,171,238,.8)"></i>новых за день</span></div>`;

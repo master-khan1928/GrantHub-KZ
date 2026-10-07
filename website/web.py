@@ -226,14 +226,20 @@ async def _favorite_ids(uid: int) -> set:
 # Страницы
 # ---------------------------------------------------------------------------
 @app.get("/")
-async def landing():
-    """Лендинг (hero-экран). Приложение живёт на /app."""
-    return FileResponse(STATIC_DIR / "landing" / "index.html")
+async def landing(request: Request, response: Response, uid: int = Depends(current_user)):
+    """Лендинг (hero-экран). Приложение живёт на /app. Заход считается событием: откуда пришёл — в payload."""
+    await log_event(uid, "web_visit", {"page": "landing", "from": request.query_params.get("from") or None})
+    page = FileResponse(STATIC_DIR / "landing" / "index.html")
+    page.raw_headers.extend(response.raw_headers)   # cookie нового посетителя
+    return page
 
 
 @app.get("/app")
-async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+async def index(request: Request, response: Response, uid: int = Depends(current_user)):
+    await log_event(uid, "web_visit", {"page": "app", "from": request.query_params.get("from") or None})
+    page = FileResponse(STATIC_DIR / "index.html")
+    page.raw_headers.extend(response.raw_headers)
+    return page
 
 
 PUBLIC_URL = (os.getenv("PUBLIC_URL") or os.getenv("SITE_URL") or "").strip().rstrip("/")

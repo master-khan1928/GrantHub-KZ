@@ -278,7 +278,7 @@ def skip_keyboard(callback_data: str) -> InlineKeyboardMarkup:
 def site_button_row(lang: str = "ru") -> list:
     """Кнопка «Открыть сайт», если адрес публичный (Telegram не принимает localhost в URL-кнопках)."""
     if SITE_URL_IS_PUBLIC:
-        return [InlineKeyboardButton(text=tr(lang, "site_btn"), url=SITE_URL)]
+        return [InlineKeyboardButton(text=tr(lang, "site_btn"), url=f"{SITE_URL}/?from=bot")]
     return [InlineKeyboardButton(text=tr(lang, "site_btn"), callback_data="site:open")]
 
 
@@ -297,9 +297,9 @@ def site_text() -> str:
         "🌐 <b>GrantHub — сайт с теми же функциями, что и у бота</b>\n\n"
         "Каталог грантов, поиск, избранное, профиль, ИИ-консультант и напоминания — всё в браузере, "
         "с крупными карточками и быстрым поиском.\n\n"
-        f"👉 {esc(SITE_URL)}\n\n"
-        f"Каталог: {esc(SITE_URL)}/app#catalog\n"
-        f"ИИ-консультант: {esc(SITE_URL)}/app#chat"
+        f"👉 {esc(SITE_URL)}/?from=bot\n\n"
+        f"Каталог: {esc(SITE_URL)}/app?from=bot#catalog\n"
+        f"ИИ-консультант: {esc(SITE_URL)}/app?from=bot#chat"
     )
 
 
@@ -897,6 +897,10 @@ async def manual_deactivate(message: types.Message):
     await message.answer(f"Грант «{grant['name']}» деактивирован.")
 
 
+_RECENT_LABELS = {"web_visit": "зашёл на сайт", "register": "зарегистрировался", "login": "вошёл", "site_open": "открыл ссылку на сайт",
+                  "start": "запустил бота", "telegram_linked": "привязал Telegram"}
+
+
 @dp.message(Command("stats"))
 @admin_only
 async def cmd_stats(message: types.Message):
@@ -915,6 +919,21 @@ async def cmd_stats(message: types.Message):
         f"Аккаунтов на сайте: {u['accounts']}, привязано к Telegram: {u['linked']}",
         f"Подписаны на рассылку: {u['subscribed']} · заполнили профиль: {u['with_profile']} · есть избранное: {u['with_favorites']}",
     ]
+    f = a["funnel"]
+    lines += [
+        "\n🔀 <b>Воронка</b> (сегодня · 7 дней · 30 дней)\n",
+        f"Заходили на сайт: {f['today']['visitors']} · {f['7d']['visitors']} · {f['30d']['visitors']}",
+        f"Пришли на сайт из бота: {f['today']['from_bot']} · {f['7d']['from_bot']} · {f['30d']['from_bot']}",
+        f"Нажали «сайт» в боте: {f['today']['site_open']} · {f['7d']['site_open']} · {f['30d']['site_open']}",
+        f"Зарегистрировались: {f['today']['registered']} · {f['7d']['registered']} · {f['30d']['registered']}",
+        f"Входили в аккаунт: {f['today']['logins']} · {f['7d']['logins']} · {f['30d']['logins']}",
+        f"Запускали бота: {f['today']['bot_starts']} · {f['7d']['bot_starts']} · {f['30d']['bot_starts']}",
+    ]
+    if a["recent"]:
+        lines.append("\n🕒 <b>Последние заходы</b>")
+        for r in a["recent"][:10]:
+            who = ("✉️ " + esc(r["email"])) if r["email"] else ("🤖 tg " if r["source"] == "telegram" else "🌐 web ") + str(r["user_id"])
+            lines.append(f"{r['at'][5:16]} · {who} · {_RECENT_LABELS.get(r['event'], r['event'])}{' (из бота)' if r['from'] == 'bot' else ''}")
     spark = " ".join(f"{d['date'][8:]}:{d['active']}" for d in a["daily"][-7:])
     lines.append(f"\nАктивных по дням (UTC): {spark}\n")
 
@@ -937,7 +956,10 @@ async def cmd_stats(message: types.Message):
         "profile_saved": "🧑‍🎓 Сохранений профиля",
         "match_view": "🎯 Просмотров подбора",
         "telegram_linked": "🔗 Привязок Telegram",
-        "site_open": "🌐 Переходов на сайт",
+        "site_open": "🌐 Нажатий «сайт» в боте",
+        "web_visit": "🖥 Заходов на сайт",
+        "register": "📝 Регистраций на сайте",
+        "login": "🔑 Входов на сайте",
         "alert_add": "🔔 Подписок на открытие",
     }
     for event_type, count in summary.items():
