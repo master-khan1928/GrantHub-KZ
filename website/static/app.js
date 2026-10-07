@@ -23,7 +23,7 @@
     '[data-degree="all"] b': 'choice.all', '[data-degree="all"] > span:nth-of-type(2)': 'choice.all.desc',
     '[data-back="region"]': 'back.regions', '[data-back="degree"]': 'back.change', '#loadMore': 'loadmore',
     '[data-view="search"] .eyebrow': 'search.eyebrow', '[data-view="search"] .vlead': 'search.lead', '#searchHint': 'search.hint',
-    '[data-view="favorites"] .eyebrow': 'fav.eyebrow', '[data-view="favorites"] .vlead': 'fav.lead', '#favEmpty p': 'fav.empty', '#favEmpty .btn': 'fav.open', '#favCal': 'fav.calendar',
+    '[data-view="favorites"] .eyebrow': 'fav.eyebrow', '[data-view="favorites"] .vlead': 'fav.lead', '#favEmpty p:not(.empty-why)': 'fav.empty', '#favEmpty .empty-why': 'fav.emptyWhy', '#favEmpty .btn': 'fav.open', '#favCal': 'fav.calendar',
     '[data-view="chat"] .eyebrow': 'chat.eyebrow', '[data-view="chat"] .vlead': 'chat.lead', '.chat-head b': 'chat.name', '#chatStatus': 'chat.status', '#chatLog .msg.ai .bubble': 'chat.hello',
     '[data-view="profile"] .eyebrow': 'profile.eyebrow', '[data-view="profile"] .vlead': 'profile.lead',
     '#profileForm button[type="submit"]': 'save', '#profileClear': 'clear',
@@ -167,6 +167,12 @@
     };
     requestAnimationFrame(tick);
   };
+  // Кнопка в состоянии загрузки: спиннер вместо текста, ширина сохраняется
+  const busy = async (btn, fn) => {
+    if (!btn) return fn();
+    btn.classList.add('is-loading'); btn.setAttribute('aria-busy', 'true');
+    try { return await fn(); } finally { btn.classList.remove('is-loading'); btn.removeAttribute('aria-busy'); }
+  };
   const loadPublicStats = async () => {
     try {
       const s = await api('/api/stats/public');
@@ -234,7 +240,7 @@
       <div class="g-main"><h3 class="g-title"><a href="/grant/${g.id}">${esc(g.name)}</a></h3>${deadlineBlock(g)}</div>
       <div class="g-tags"><span class="tag">${degreeLabel[g.degree] || g.degree}</span>${statusTag(g)}${urgentTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}${Object.entries(g.gaps || {}).map(([k, n]) => `<span class="tag gap">${t('gap.' + k, { n })}</span>`).join('')}</div>
       <div class="g-row">${icon.money}<div><b>${t('card.coverage')}:</b> ${esc(g.coverage)}</div></div>
-      <div class="g-row">${icon.list}<div><b>${t('card.requirements')}:</b> ${esc(g.requirements)}</div></div>
+      <div class="g-row g-req" data-more="${t('card.more')}">${icon.list}<div><b>${t('card.requirements')}:</b> ${esc(g.requirements)}</div></div>
       <div class="g-foot">
         <a class="g-apply" href="${/^https?:\/\//i.test(g.link) ? esc(g.link) : '#'}" target="_blank" rel="noopener nofollow">${t('card.apply')} ${icon.ext}</a>
         <div class="g-actions">
@@ -252,6 +258,10 @@
     const base = append ? grid.children.length : 0;
     items.forEach(g => state.grants.set(g.id, g));
     grid.insertAdjacentHTML('beforeend', items.map((g, i) => cardHTML(g, Math.min(i, 10))).join(''));
+    // длинные требования: обрезка до трёх строк, раскрытие по клику — только если текст действительно не влез
+    requestAnimationFrame(() => grid.querySelectorAll('.g-req:not(.clamped):not(.open) > div').forEach(el => {
+      if (el.scrollHeight > el.clientHeight + 1) el.parentElement.classList.add('clamped');
+    }));
     void base;
   };
   const skeletons = (grid, n = 6) => grid.innerHTML = Array.from({ length: n }, () => '<div class="skeleton"></div>').join('');
@@ -412,6 +422,10 @@
   });
 
   // ---------- Favorites ----------
+  document.addEventListener('click', (e) => {
+    const row = e.target.closest('.g-req.clamped'); if (!row || e.target.closest('a')) return;
+    row.classList.toggle('open');
+  });
   // ---------- Поделиться: ссылка на страницу гранта (с превью для Telegram и WhatsApp) ----------
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-share]'); if (!btn) return;
@@ -460,7 +474,7 @@
       gpa: f.gpa.value === '' ? null : Number(f.gpa.value),
       field_of_interest: f.field_of_interest.value.trim() || null,
     };
-    try { const d = await api('/api/profile', { method: 'POST', body }); state.profile = d.profile; toast(t('profile.saved'), 'ok'); }
+    try { const d = await busy(e.submitter || f.querySelector('[type=submit]'), () => api('/api/profile', { method: 'POST', body })); state.profile = d.profile; toast(t('profile.saved'), 'ok'); }
     catch (err) { toast(err.message, 'err'); }
   });
   $('#profileClear').addEventListener('click', async () => {
@@ -507,7 +521,7 @@
   $('#tgGetCode').addEventListener('click', async () => {
     const btn = $('#tgGetCode'); btn.disabled = true;
     try {
-      const d = await api('/api/link/code', { method: 'POST' });
+      const d = await busy(btn, () => api('/api/link/code', { method: 'POST' }));
       $('#tgCode').textContent = d.code; $('#tgCodeHint').textContent = t('tg.hint'); $('#tgCodeBox').hidden = false;
       const a = $('#tgOpenBot'); if (d.bot_url) { a.href = d.bot_url; a.hidden = false; } else a.hidden = true;
       if (state.linkTimer) clearInterval(state.linkTimer);
@@ -523,7 +537,7 @@
   $('#tgForm').addEventListener('submit', async (e) => {
     e.preventDefault(); const code = $('#tgInput').value.trim().toUpperCase(); if (!code) return;
     $('#tgConfirm').disabled = true;
-    try { await api('/api/link/confirm', { method: 'POST', body: { code } }); $('#tgInput').value = ''; await afterLinked(); }
+    try { await busy($('#tgConfirm'), () => api('/api/link/confirm', { method: 'POST', body: { code } })); $('#tgInput').value = ''; await afterLinked(); }
     catch (err) { toast(err.message, 'err'); }
     finally { $('#tgConfirm').disabled = false; }
   });
@@ -566,7 +580,7 @@
   };
   const ask = async (q) => {
     q = q.trim(); if (!q) return;
-    addMsg('user', esc(q)); input.value = ''; autosize(); sendBtn.disabled = true;
+    addMsg('user', esc(q)); input.value = ''; autosize(); sendBtn.disabled = true; sendBtn.classList.add('is-loading');
     $('#suggestions').hidden = true; $('#chatStatus').textContent = t('chat.thinking');
     const ai = addMsg('ai', '<span class="typing"><i></i><i></i><i></i></span>');
     const bubble = ai.querySelector('.bubble');
@@ -594,7 +608,7 @@
       bubble.innerHTML = md(text || t('chat.empty'));
       if (answerId) bubble.insertAdjacentHTML('beforeend', `<div class="fb" data-answer="${answerId}"><button data-rate="1" title="${t('fb.up')}">👍</button><button data-rate="-1" title="${t('fb.down')}">👎</button></div>`);
     } catch (err) { bubble.innerHTML = `${ui.warn} ${esc(err.message)}`; }
-    finally { sendBtn.disabled = false; $('#chatStatus').textContent = t('chat.status'); input.focus(); }
+    finally { sendBtn.disabled = false; sendBtn.classList.remove('is-loading'); $('#chatStatus').textContent = t('chat.status'); input.focus(); }
   };
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); ask(input.value); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input.value); } });
@@ -612,7 +626,7 @@
   // ---------- Admin ----------
   const adminEnter = async () => {
     try {
-      await api('/api/admin/login', { method: 'POST' });
+      await busy($('#adminLoginBtn'), () => api('/api/admin/login', { method: 'POST' }));
       $('#adminLogin').hidden = true; $('#adminPanel').hidden = false;
       localStorage.setItem('gh_admin', state.adminToken);
       loadAdmin();
@@ -733,7 +747,7 @@
   });
   $('#scanBtn').addEventListener('click', async () => {
     try {
-      const d = await api('/api/admin/scan', { method: 'POST' }); toast(d.message, 'ok');
+      const d = await busy($('#scanBtn'), () => api('/api/admin/scan', { method: 'POST' })); toast(d.message, 'ok');
       renderScan({ running: true, started_at: new Date().toISOString().slice(0, 19) });
       clearInterval(state.scanTimer);
       state.scanTimer = setInterval(async () => {
@@ -778,7 +792,7 @@
     try {
       const body = { email: f.email.value.trim(), password: f.password.value };
       if (authMode === 'register') body.name = f.name.value.trim() || null;
-      const d = await api(authMode === 'register' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body });
+      const d = await busy($('#authSubmit'), () => api(authMode === 'register' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body }));
       renderUser(d.user); closeAuth(); f.reset();
       toast(authMode === 'register' ? t('auth.welcome', { name: d.user.name }) : t('auth.back', { name: d.user.name }), 'ok');
       const favs = await api('/api/favorites'); state.favIds = new Set(favs.items.map(g => g.id)); updateFavBadge();
@@ -886,7 +900,7 @@
       ];
       $('#homeTiles').innerHTML = tiles.map(([v, l, cls, bar]) => `<div class="tile"><b class="${cls || ''}">${v}</b><span>${l}</span>${bar != null ? `<div class="bar"><i style="--w:${bar}%"></i></div>` : ''}</div>`).join('');
       const tipNav = { profile: 'profile', favorites: 'catalog', deadline: 'favorites', chat: 'chat' }[h.tip] || 'catalog';
-      $('#homeTip').innerHTML = `<p class="eyebrow">${t('home.tip')}</p><p>${t('home.tip.' + h.tip)}</p><a href="#${tipNav}" data-nav="${tipNav}" class="btn btn-primary btn-sm">${t('home.tip.' + h.tip + '.btn')}</a>`;
+      $('#homeTip').innerHTML = `<p class="eyebrow">${t('home.tip')}</p><p>${t('home.tip.' + h.tip)}</p><a href="#${tipNav}" data-nav="${tipNav}" class="btn btn-ghost btn-sm">${t('home.tip.' + h.tip + '.btn')}</a>`;
       $('#homeDlTitle').textContent = h.upcoming_is_favorites ? t('home.deadlinesFav') : t('home.deadlines');
       $('#homeDl').innerHTML = h.upcoming.length ? h.upcoming.map(dlLine).join('') : `<li><span class="dl-meta">${t('card.tbd')}</span></li>`;
       h.upcoming.forEach(g => state.grants.set(g.id, g));

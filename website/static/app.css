@@ -402,11 +402,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 8px clamp(12px, 2.5vw, 24px) 
 :root[data-theme="light"] .nav a { color: rgba(0,0,0,.5); } :root[data-theme="light"] .nav a:hover, :root[data-theme="light"] .nav a.active { color: #0a0a0a; }
 :root[data-theme="light"] .nav-ink { background: rgba(0,0,0,.06); }
 :root[data-theme="light"] .pill--dark { background: rgba(0,0,0,.05); color: rgba(0,0,0,.8); }
-:root[data-theme="light"] .pill--white, :root[data-theme="light"] .btn-primary, :root[data-theme="light"] .send, :root[data-theme="light"] .lang button.is-on, :root[data-theme="light"] .user-initial, :root[data-theme="light"] .badge, :root[data-theme="light"] .toast { background: #0a0a0a; color: #fff; }
-:root[data-theme="light"] .btn-primary:hover { box-shadow: 0 16px 40px -16px rgba(0,0,0,.6); }
+:root[data-theme="light"] .lang button.is-on, :root[data-theme="light"] .user-initial, :root[data-theme="light"] .badge, :root[data-theme="light"] .toast { background: #0a0a0a; color: #fff; }
 :root[data-theme="light"] .icon-btn, :root[data-theme="light"] .lang, :root[data-theme="light"] .user-chip { background: rgba(0,0,0,.05); color: #0a0a0a; }
 :root[data-theme="light"] .lang button { color: rgba(0,0,0,.5); } :root[data-theme="light"] .lang button:hover { color: #0a0a0a; }
-:root[data-theme="light"] .btn-ghost { background: rgba(0,0,0,.04); color: #0a0a0a; } :root[data-theme="light"] .btn-ghost:hover { background: rgba(0,0,0,.08); }
 :root[data-theme="light"] .view { background: #fff; border-color: rgba(0,0,0,.06); box-shadow: 0 30px 80px -40px rgba(0,0,0,.25); }
 :root[data-theme="light"] .view::before { background: linear-gradient(180deg, rgba(0,0,0,.02), transparent 30%); }
 :root[data-theme="light"] .view::after { background: radial-gradient(50% 50% at 50% 50%, rgba(0,0,0,.06), transparent 70%); }
@@ -431,7 +429,6 @@ main { max-width: 1280px; margin: 0 auto; padding: 8px clamp(12px, 2.5vw, 24px) 
 :root[data-theme="light"] .rem a { color: #0a0a0a; }
 :root[data-theme="light"] .cmp-bar { background: #fff; color: #0a0a0a; }
 :root[data-theme="light"] .dl-days { color: #0a0a0a; }
-:root[data-theme="light"] .g-apply { background: #0a0a0a; color: #fff; }
 :root[data-theme="light"] .cmp-check.on { background: #0a0a0a; color: #fff; border-color: #0a0a0a; }
 :root[data-theme="light"] .palette__item.is-active { background: rgba(0,0,0,.06); }
 :root[data-theme="light"] kbd { background: rgba(0,0,0,.06); color: #0a0a0a; }
@@ -671,3 +668,97 @@ html::-webkit-scrollbar { display: none; width: 0; }
 .recent td:nth-child(2) { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .recent .tag { margin-left: 6px; }
 .aud-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+
+/* =====================================================================
+   v4: система кнопок на токенах
+   Три уровня: primary (белая, одна на экран) → ghost (полупрозрачная) → link (текст со стрелкой).
+   Отдельный зелёный «go» — только для главного действия продукта: «Подать заявку».
+   Наведение: меняется фон и мягкое свечение, без прыжков и увеличения.
+   ===================================================================== */
+:root {
+  --btn-primary-bg: #ffffff; --btn-primary-fg: #050505; --btn-primary-hover: #e8e8ec; --btn-primary-glow: 0 0 24px rgba(255,255,255,.16);
+  --btn-ghost-bg: rgba(255,255,255,.06); --btn-ghost-hover: rgba(255,255,255,.12); --btn-ghost-fg: #ffffff; --btn-ghost-border: rgba(255,255,255,.12);
+  --btn-go-bg: #3ddc84; --btn-go-fg: #03210f; --btn-go-hover: #5be59a; --btn-go-glow: 0 0 26px rgba(61,220,132,.28);
+  --focus: #ffffff; --tap: 40px;
+}
+:root[data-theme="light"] {
+  --btn-primary-bg: #0a0a0a; --btn-primary-fg: #ffffff; --btn-primary-hover: #2a2a2e; --btn-primary-glow: 0 10px 24px -12px rgba(0,0,0,.45);
+  --btn-ghost-bg: rgba(0,0,0,.04); --btn-ghost-hover: rgba(0,0,0,.08); --btn-ghost-fg: #0a0a0a; --btn-ghost-border: rgba(0,0,0,.12);
+  --btn-go-bg: #15803d; --btn-go-fg: #ffffff; --btn-go-hover: #166534; --btn-go-glow: 0 10px 24px -12px rgba(21,128,61,.55);
+  --focus: #0a0a0a;
+}
+@media (pointer: coarse) { :root { --tap: 44px; } }
+
+.btn, .pill, .g-apply, .icon-btn, .send, .fav, .cmp-check, .dd-btn {
+  transition: background-color var(--fast) ease, border-color var(--fast) ease, color var(--fast) ease, box-shadow var(--base) ease, transform var(--fast) ease;
+}
+.btn { min-height: var(--tap); }
+.btn-sm { min-height: 36px; }
+@media (pointer: coarse) { .btn-sm { min-height: 44px; } }
+
+.btn-primary, .pill--white, .send { background: var(--btn-primary-bg); color: var(--btn-primary-fg); border-color: transparent; }
+.btn-primary:hover, .pill--white:hover, .send:hover { background: var(--btn-primary-hover); box-shadow: var(--btn-primary-glow); transform: translateY(-1px); }
+.btn-ghost { background: var(--btn-ghost-bg); color: var(--btn-ghost-fg); border-color: var(--btn-ghost-border); }
+.btn-ghost:hover { background: var(--btn-ghost-hover); transform: none; }
+.icon-btn:hover { transform: none; }
+.btn-link { min-height: auto; padding: 6px 2px; background: none; border: 0; color: var(--fg); font-weight: 500; }
+.btn-link::after { content: "→"; display: inline-block; transition: transform var(--fast) ease; }
+.btn-link:hover { background: none; box-shadow: none; transform: none; }
+.btn-link:hover::after { transform: translateX(3px); }
+.btn:active, .pill:active, .g-apply:active, .send:active { transform: translateY(0) scale(.98); }
+
+/* Главное действие продукта — зелёное */
+.g-apply { position: relative; min-height: var(--tap); background: var(--btn-go-bg); color: var(--btn-go-fg); }
+.g-apply:hover { background: var(--btn-go-hover); box-shadow: var(--btn-go-glow); transform: translateY(-1px); }
+
+/* Карточки: спокойнее при наведении */
+.gcard:hover { transform: translateY(-3px); }
+
+/* Фокус с клавиатуры: единое кольцо (контур повторяет скругление) */
+:where(.btn, .pill, .g-apply, .icon-btn, .send, .fav, .cmp-check, .dd-btn, .seg button, .lang button, .nav a, .choice, .user-chip, .fav-status select):focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 3px; border-radius: inherit;
+}
+
+/* Загрузка: спиннер внутри кнопки, ширина не меняется */
+.is-loading { position: relative; color: transparent !important; pointer-events: none; opacity: 1 !important; }
+.is-loading > * { visibility: hidden; }
+.is-loading::after { content: ""; position: absolute; inset: 0; margin: auto; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--spin, var(--btn-primary-fg)); border-right-color: transparent; animation: spin .7s linear infinite; }
+.btn-ghost.is-loading, .btn-link.is-loading { --spin: var(--btn-ghost-fg); }
+.g-apply.is-loading { --spin: var(--btn-go-fg); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Кнопки-иконки на карточке: крупнее для пальца */
+@media (pointer: coarse) { .g-actions .fav, .g-actions .cmp-check { width: 44px; height: 44px; } }
+/* На телефоне подсказок при наведении нет — подписи видны под иконками */
+@media (max-width: 760px) {
+  .g-foot { padding-bottom: 18px; }
+  .g-actions { gap: 22px; }
+  .g-actions .fav em, .g-actions .cmp-check em { display: block; opacity: 1; top: calc(100% + 3px); max-width: 60px; overflow: hidden; text-overflow: ellipsis;
+    padding: 0; background: none; color: var(--muted-fg); font-size: 9.5px; }
+  :root[data-theme="light"] .g-actions button em { background: none; color: var(--muted-fg); }
+}
+
+/* Теги статусов: не только цвет, но и форма — заметно при дальтонизме */
+.tag.open::before, .tag.upcoming::before, .tag.urgent::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; vertical-align: 1px; border-radius: 50%; }
+.tag.open::before { background: currentColor; }
+.tag.upcoming::before { border: 1.5px solid currentColor; width: 5px; height: 5px; }
+.tag.urgent::before { border-radius: 1px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 7px solid currentColor; background: none; }
+
+/* Читаемость: тонкий серый текст на тёмном фоне — тяжелее */
+.g-row, .vlead, .empty, .lead { font-weight: 400; }
+
+/* Требования в карточке: три строки, полностью — по клику */
+.g-req { flex-wrap: wrap; }
+.g-req > div { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.g-req.clamped { cursor: pointer; }
+.g-req.clamped::after { content: attr(data-more); flex-basis: 100%; padding-left: 24px; font-size: 12px; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+.g-req.open > div { -webkit-line-clamp: unset; display: block; }
+.g-req.open::after { content: none; }
+
+/* Пустые состояния: мягкое свечение вокруг значка и строка о пользе */
+.empty-mark { position: relative; }
+.empty-mark::before { content: ""; position: absolute; inset: -18px; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,.10), transparent 70%); filter: blur(6px); z-index: -1; }
+:root[data-theme="light"] .empty-mark::before { background: radial-gradient(circle, rgba(0,0,0,.06), transparent 70%); }
+.empty .empty-why { margin: -4px 0 4px; max-width: 420px; font-size: .88rem; color: var(--muted-fg); }
