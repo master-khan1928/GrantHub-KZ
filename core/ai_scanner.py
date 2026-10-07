@@ -260,6 +260,18 @@ async def _groq_generate(system: str, user: str, temperature: float, json_mode: 
                         last_exc = RuntimeError(f"Groq HTTP {resp.status}: {text}")
                         await asyncio.sleep(delay)
                         continue
+                    if resp.status == 400 and json_mode:
+                        # JSON-режим Groq отвергает ответ, если модель ничего не нашла и вернула «[]» —
+                        # для нас это штатный результат «кандидатов нет», а не ошибка батча
+                        err = await resp.text()
+                        if "json_validate_failed" in err:
+                            fg = re.search(r'"failed_generation"\s*:\s*"((?:[^"\\]|\\.)*)"', err)
+                            raw = (fg.group(1) if fg else "").encode().decode("unicode_escape", "ignore").strip()
+                            if raw in ("", "[]", "{}", '{"grants": []}', '{"grants":[]}'):
+                                return "[]"
+                            logging.warning(f"Groq отверг JSON ответа (json_validate_failed): {raw[:160]}")
+                            return "[]"
+                        raise RuntimeError(f"Groq HTTP 400: {err[:300]}")
                     if resp.status != 200:
                         raise RuntimeError(f"Groq HTTP {resp.status}: {(await resp.text())[:300]}")
                     data = await resp.json()
@@ -451,7 +463,7 @@ PROGRAMS = [
     "OSCE Academy scholarship", "Nazarbayev University grant admission", "Ministry of Education Kazakhstan state grant",
 ]
 
-# --- 150 университетов для точечного поиска ---
+# --- 344 университетов для точечного поиска ---
 UNIVERSITIES = [
     "Harvard University", "Stanford University", "Massachusetts Institute of Technology",
     "University of Oxford", "University of Cambridge", "California Institute of Technology",
@@ -506,6 +518,67 @@ UNIVERSITIES = [
     "Abai Kazakh National Pedagogical University", "Auezov South Kazakhstan University", "Toraighyrov University", "University of Auckland",
     "University of Otago", "Trinity College Dublin", "University College Dublin",
     "Sungkyunkwan University", "Hanyang University",
+    # --- Расширение: Центральная Азия, СНГ, Турция, Европа, Азия, Америка, Африка ---
+    "Nazarbayev University School of Medicine", "Kazakh National University of Arts", "Kazakh-Turkish Manas University",
+    "American University of Central Asia", "Ala-Too International University", "Westminster International University in Tashkent",
+    "Inha University in Tashkent", "National University of Uzbekistan", "Tashkent State University of Economics",
+    "Belarusian State University", "Moscow State University", "Higher School of Economics",
+    "ITMO University", "Saint Petersburg State University", "Tomsk State University",
+    "Novosibirsk State University", "Baku Higher Oil School", "ADA University",
+    "Yerevan State University", "Tbilisi State University", "Koc University",
+    "Sabanci University", "Bilkent University", "Bogazici University",
+    "Middle East Technical University", "Istanbul Technical University", "Hacettepe University",
+    "Tel Aviv University", "Hebrew University of Jerusalem", "Technion Israel Institute of Technology",
+    "Weizmann Institute of Science", "New York University Abu Dhabi", "Hamad Bin Khalifa University",
+    "Sultan Qaboos University", "University of Groningen", "Erasmus University Rotterdam",
+    "Wageningen University", "Eindhoven University of Technology", "Ghent University",
+    "Universite catholique de Louvain", "University of Geneva", "University of Bern",
+    "University of Basel", "RWTH Aachen University", "University of Freiburg",
+    "University of Tubingen", "University of Gottingen", "Karlsruhe Institute of Technology",
+    "University of Bonn", "University of Hamburg", "TU Berlin",
+    "TU Dresden", "University of Stuttgart", "Ecole Polytechnique",
+    "Universite PSL", "Universite Paris-Saclay", "Universite Grenoble Alpes",
+    "HEC Paris", "University of Glasgow", "University of Bristol",
+    "University of Warwick", "University of Birmingham", "University of Leeds",
+    "University of Sheffield", "University of Nottingham", "University of Southampton",
+    "Durham University", "University of St Andrews", "Lancaster University",
+    "University of Bath", "Queen Mary University of London", "University of Exeter",
+    "Chalmers University of Technology", "KTH Royal Institute of Technology", "Stockholm University",
+    "University of Gothenburg", "Aarhus University", "Technical University of Denmark",
+    "Aalto University", "University of Turku", "University of Bergen",
+    "Norwegian University of Science and Technology", "University of Iceland", "Vienna University of Technology",
+    "University of Graz", "Jagiellonian University", "Warsaw University of Technology",
+    "AGH University of Krakow", "Czech Technical University in Prague", "Masaryk University",
+    "Eotvos Lorand University", "University of Debrecen", "Semmelweis University",
+    "University of Szeged", "University of Ljubljana", "University of Zagreb",
+    "University of Belgrade", "University of Bucharest", "Sofia University",
+    "University of Tartu", "Vilnius University", "University of Latvia",
+    "University of Padua", "University of Milan", "University of Pisa",
+    "University of Turin", "University of Lisbon", "University of Porto",
+    "Universidad de Navarra", "IE University", "University of Cyprus",
+    "National and Kapodistrian University of Athens", "University of Malta", "Zhejiang University",
+    "Nanjing University", "University of Science and Technology China", "Wuhan University",
+    "Sun Yat-sen University", "Harbin Institute of Technology", "Xi'an Jiaotong University",
+    "Tongji University", "Hong Kong Polytechnic University", "City University of Hong Kong",
+    "Macau University of Science and Technology", "Tohoku University", "Nagoya University",
+    "Hokkaido University", "Kyushu University", "University of Tsukuba",
+    "Pohang University of Science and Technology", "Kyung Hee University", "Ewha Womans University",
+    "Nanyang Business School", "Singapore Management University", "University of Indonesia",
+    "Universiti Putra Malaysia", "Universiti Sains Malaysia", "Universiti Kebangsaan Malaysia",
+    "Ateneo de Manila University", "University of the Philippines", "Vietnam National University Hanoi",
+    "Indian Institute of Technology Madras", "Indian Institute of Management Ahmedabad", "University of Delhi",
+    "University of Queensland", "Monash University", "University of New South Wales",
+    "University of Western Australia", "University of Adelaide", "Macquarie University",
+    "RMIT University", "Victoria University of Wellington", "University of Canterbury",
+    "Massey University", "University of Florida", "University of Maryland",
+    "University of Pittsburgh", "University of Colorado Boulder", "University of Arizona",
+    "Texas A&M University", "University of Rochester", "Emory University",
+    "Tufts University", "Washington University in St. Louis", "University of Massachusetts Amherst",
+    "Indiana University Bloomington", "University of Ottawa", "Western University",
+    "McMaster University", "Simon Fraser University", "University of Calgary",
+    "Dalhousie University", "University of Chile", "Universidad de los Andes",
+    "Universidad Nacional de Colombia", "University of Ghana", "University of Lagos",
+    "Addis Ababa University", "University of Pretoria", "University of Rwanda",
 ]
 
 CONCURRENT_SEARCH_LIMIT = 8       # сколько запросов к DDGS одновременно
@@ -514,10 +587,10 @@ UNIVERSITY_RESULTS_PER_QUERY = 3  # сниппетов на каждый зап�
 PROGRAM_RESULTS_PER_QUERY = 3     # сниппетов на каждый запрос по программе-конкурсу
 BROAD_RESULTS_PER_QUERY = 5       # сниппетов на общий запрос
 EXTRACTION_CHUNK_SNIPPETS = int(os.getenv(
-    "EXTRACTION_CHUNK_SNIPPETS", {"gemini": "50", "groq": "10"}.get(LLM_PROVIDER, "12")
+    "EXTRACTION_CHUNK_SNIPPETS", {"gemini": "50", "groq": "7"}.get(LLM_PROVIDER, "12")
 ))  # сколько сниппетов отправляем в модель за один вызов; локальной — меньше
 EXTRACTION_DELAY = float(os.getenv(
-    "EXTRACTION_DELAY", {"groq": "12"}.get(LLM_PROVIDER, "0")
+    "EXTRACTION_DELAY", {"groq": "15"}.get(LLM_PROVIDER, "0")
 ))  # пауза между вызовами модели, сек — чтобы не упереться в лимит токенов/минуту облачного API
 LINK_CHECK_CONCURRENCY = 10
 LINK_CHECK_TIMEOUT = 8

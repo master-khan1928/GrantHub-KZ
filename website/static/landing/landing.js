@@ -32,7 +32,7 @@
     titleLine1: 'Гранты на учёбу',
     titleLine2: 'по всему миру',
     cards: [
-      { value: '150+', label: 'университетов', statKey: 'universities', suffix: '+' },
+      { value: '300+', label: 'университетов', statKey: 'universities', suffix: '+' },
       { value: '70', label: 'международных конкурсов', statKey: 'programs' },
       { value: '24/7', label: 'ИИ-мониторинг' },
     ],

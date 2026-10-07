@@ -41,7 +41,7 @@ from core.database import (  # noqa: E402
     get_recent_grants, get_all_active_grants,
     save_ai_answer, search_grants, set_answer_rating, set_grant_active, set_user_profile,
     create_link_code, consume_link_code, get_link_code, get_account_by_id, is_linked, get_audience_stats,
-    get_public_usage,
+    get_public_usage, get_audience_rows,
 )
 from core.geo import normalize_country  # noqa: E402
 from core.matching import has_profile, match_grants  # noqa: E402
@@ -768,6 +768,23 @@ async def api_admin_scan_status(_: bool = Depends(require_admin)):
 async def api_admin_monitor(_: bool = Depends(require_admin)):
     summary = await get_monitor_summary()
     return {**summary, "last_scan": ai_scanner.last_scan_stats, "scan_hours": SCAN_HOURS, "timezone": TIMEZONE}
+
+
+@app.get("/api/admin/users.csv")
+async def api_admin_users_csv(_: bool = Depends(require_admin)):
+    """Выгрузка аудитории: кто, откуда, когда пришёл, последняя активность. Только администратору."""
+    import csv
+    import io as _io
+    buf = _io.StringIO()
+    buf.write("\ufeff")   # BOM — чтобы Excel открыл кириллицу
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["user_id", "source", "email", "name", "joined_at", "last_seen", "actions", "favorites", "linked", "subscribed", "ielts", "gpa", "field"])
+    for r in await get_audience_rows():
+        w.writerow([r["user_id"], r["source"], r["email"] or "", r["name"] or "", r["joined_at"] or "", r["last_seen"] or "",
+                    r["actions"], r["favorites"], "yes" if r["linked_at"] else "", "yes" if r["subscribed"] else "",
+                    r["ielts"] or "", r["gpa"] or "", r["field_of_interest"] or ""])
+    name = f"granthub-audience-{datetime.date.today().isoformat()}.csv"
+    return Response(buf.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/admin/stats")

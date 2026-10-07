@@ -703,6 +703,15 @@
         + (s.result.grants.length ? `<div class="grid" style="margin-top:14px">${s.result.grants.map((g, i) => cardHTML(g, i)).join('')}</div>` : '');
     } else status.textContent = 'Не запускалось';
   };
+  $('#audienceCsv')?.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/admin/users.csv', { headers: { 'X-Admin-Token': state.adminToken } });
+      if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+      const blob = await res.blob(), a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'audience.csv';
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+    } catch (err) { toast(err.message, 'err'); }
+  });
   $('#scanBtn').addEventListener('click', async () => {
     try {
       const d = await api('/api/admin/scan', { method: 'POST' }); toast(d.message, 'ok');

@@ -319,6 +319,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(a["daily"]), 14)
         self.assertGreaterEqual(a["daily"][-1]["active"], 1)
 
+    def test_admin_users_csv_and_digest_source(self):
+        run(db.add_user(779)); run(db.log_event(779, "start"))   # пользователь бота
+        self.assertEqual(self.client.get("/api/admin/users.csv").status_code, 401)
+        r = self.client.get("/api/admin/users.csv", headers={"X-Admin-Token": "test-token"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("text/csv", r.headers["content-type"])
+        self.assertIn("user_id;source;email", r.text)
+        self.assertIn("telegram", r.text)                      # пользователь бота из других тестов
+        fresh = run(db.get_grants_added_since(days=7))         # гранты, добавленные в setUpClass — «за неделю»
+        self.assertGreaterEqual(len(fresh), 1)
+        self.assertTrue(all(g["is_active"] == 1 for g in fresh))
+
     def test_public_usage_counter(self):
         run(db.add_user(778)); run(db.log_event(778, "start"))                       # пользователь бота
         anon = self.client.get("/api/grants?category=all&limit=1")                   # посетитель сайта только смотрел

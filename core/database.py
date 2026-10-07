@@ -926,6 +926,39 @@ async def get_recent_grants(limit: int = 10) -> list:
             return [dict(r) for r in await cursor.fetchall()]
 
 
+async def get_grants_added_since(days: int = 7, limit: int = 50) -> list:
+    """Активные гранты, появившиеся в каталоге за последние N дней — для еженедельного дайджеста."""
+    since = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat(timespec="seconds")   # first_seen — локальное время
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM grants WHERE is_active = 1 AND record_status = 'active' AND first_seen >= ? ORDER BY first_seen DESC LIMIT ?",
+            (since, limit),
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_audience_rows() -> list:
+    """Все пользователи для выгрузки CSV: кто, откуда, когда пришёл, последняя активность, число действий."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT u.user_id, u.joined_at, u.linked_at, u.subscribed, u.ielts, u.gpa, u.field_of_interest,
+                      a.email, a.name, a.provider,
+                      (SELECT MAX(created_at) FROM events e WHERE e.user_id = u.user_id) AS last_seen,
+                      (SELECT COUNT(*) FROM events e WHERE e.user_id = u.user_id AND e.event_type != 'web_visit') AS actions,
+                      (SELECT COUNT(*) FROM favorites f WHERE f.user_id = u.user_id) AS favorites
+               FROM users u LEFT JOIN web_accounts a ON a.uid = u.user_id
+               ORDER BY u.joined_at DESC"""
+        ) as cursor:
+            rows = []
+            for r in await cursor.fetchall():
+                d = dict(r)
+                d["source"] = "telegram" if d["user_id"] < SITE_UID_MIN else ("site_account" if d["email"] else "site_visitor")
+                rows.append(d)
+            return rows
+
+
 async def get_all_active_grants() -> list:
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row

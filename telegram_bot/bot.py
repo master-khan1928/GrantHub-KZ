@@ -57,6 +57,7 @@ from core.database import (
     get_audience_stats,
     get_public_usage,
     refresh_usage_snapshot,
+    get_grants_added_since,
     create_link_code,
     consume_link_code,
     is_linked,
@@ -167,6 +168,7 @@ T = {
                   "🧑‍🎓 Заполни /profile — я буду учитывать твои баллы при советах.\n"
                   "🌍 Язык: /lang\n\nШаг 1 из 2: выбери регион обучения 👇"),
         "people_line": "👥 Нас уже <b>{n}</b> — бот и сайт вместе{delta}.", "people_delta": ", +{d} за неделю",
+        "onboard_btn": "🧑‍🎓 Настроить профиль — 1 минута", "digest_title": "🗞 <b>Новое за неделю</b>", "digest_for_you": "Подобрано под твой профиль:", "digest_all": "Свежие программы в каталоге:", "digest_foot": "Все гранты: /start · подбор под профиль: /match · отписаться: /unsubscribe",
         "kz_btn": "🇰🇿 Гранты в Казахстане", "abroad_btn": "🌍 Зарубежные гранты", "site_btn": "🌐 Открыть сайт GrantHub",
         "bachelor": "🎓 Бакалавриат", "master": "🏛 Магистратура", "all": "🔎 Показать все уровни", "back_regions": "« Назад к выбору региона",
         "status": "Статус", "source": "Источник", "coverage": "Покрытие", "requirements": "Требования", "deadline": "Дедлайн", "site": "Официальный сайт",
@@ -191,6 +193,7 @@ T = {
                   "🧑‍🎓 /profile толтыр — кеңес бергенде балдарыңды ескеремін.\n"
                   "🌍 Тіл: /lang\n\n1-қадам / 2: оқу аймағын таңда 👇"),
         "people_line": "👥 Бізбен бірге <b>{n}</b> адам — бот пен сайт{delta}.", "people_delta": ", аптасына +{d}",
+        "onboard_btn": "🧑‍🎓 Профильді баптау — 1 минут", "digest_title": "🗞 <b>Аптадағы жаңалықтар</b>", "digest_for_you": "Профиліңе сай іріктелді:", "digest_all": "Каталогтағы жаңа бағдарламалар:", "digest_foot": "Барлық гранттар: /start · профильге сай: /match · бас тарту: /unsubscribe",
         "kz_btn": "🇰🇿 Қазақстандағы гранттар", "abroad_btn": "🌍 Шетелдік гранттар", "site_btn": "🌐 GrantHub сайтын ашу",
         "bachelor": "🎓 Бакалавриат", "master": "🏛 Магистратура", "all": "🔎 Барлық деңгейді көрсету", "back_regions": "« Аймақ таңдауға оралу",
         "status": "Мәртебе", "source": "Дереккөз", "coverage": "Жабуы", "requirements": "Талаптар", "deadline": "Дедлайн", "site": "Ресми сайт",
@@ -215,6 +218,7 @@ T = {
                   "🧑‍🎓 Fill in /profile — I’ll consider your scores in my advice.\n"
                   "🌍 Language: /lang\n\nStep 1 of 2: choose where to study 👇"),
         "people_line": "👥 <b>{n}</b> people already use the bot and the site{delta}.", "people_delta": ", +{d} this week",
+        "onboard_btn": "🧑‍🎓 Set up profile — 1 minute", "digest_title": "🗞 <b>New this week</b>", "digest_for_you": "Matched to your profile:", "digest_all": "Fresh programs in the catalog:", "digest_foot": "All grants: /start · matched for you: /match · unsubscribe: /unsubscribe",
         "kz_btn": "🇰🇿 Grants in Kazakhstan", "abroad_btn": "🌍 Grants abroad", "site_btn": "🌐 Open the GrantHub website",
         "bachelor": "🎓 Bachelor's", "master": "🏛 Master's", "all": "🔎 Show all levels", "back_regions": "« Back to regions",
         "status": "Status", "source": "Source", "coverage": "Coverage", "requirements": "Requirements", "deadline": "Deadline", "site": "Official website",
@@ -287,13 +291,15 @@ def site_button_row(lang: str = "ru") -> list:
     return [InlineKeyboardButton(text=tr(lang, "site_btn"), callback_data="site:open")]
 
 
-def get_region_menu(lang: str = "ru") -> InlineKeyboardMarkup:
+def get_region_menu(lang: str = "ru", onboarding: bool = False) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=tr(lang, "kz_btn"), callback_data="region:kz")],
         [InlineKeyboardButton(text=tr(lang, "abroad_btn"), callback_data="region:abroad")],
         [InlineKeyboardButton(text=tr(lang, "match_btn"), callback_data="match:0")],
         site_button_row(lang),
     ]
+    if onboarding:   # новому пользователю без профиля — сразу предложить два вопроса, чтобы подбор стал персональным
+        buttons.insert(0, [InlineKeyboardButton(text=tr(lang, "onboard_btn"), callback_data="profile:start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -374,7 +380,9 @@ async def cmd_start(message: types.Message):
     if payload.lower().startswith("link_"):          # ссылка с сайта: t.me/бот?start=link_КОД
         await _do_link(message, payload[5:])
         return
-    await message.answer(tr(lang, "start") + "\n\n" + await people_line(lang), parse_mode="HTML", reply_markup=get_region_menu(lang))
+    onboarding = not has_profile(await get_user_profile(message.from_user.id))
+    await message.answer(tr(lang, "start") + "\n\n" + await people_line(lang), parse_mode="HTML",
+                         reply_markup=get_region_menu(lang, onboarding=onboarding))
 
 
 async def people_line(lang: str) -> str:
@@ -558,14 +566,26 @@ async def cmd_stop(message: types.Message):
 
 # --- Профиль (FSM) ---
 
-@dp.message(Command("profile"))
-async def cmd_profile(message: types.Message, state: FSMContext):
+async def start_profile(message: types.Message, state: FSMContext):
     await state.set_state(ProfileStates.waiting_ielts)
     await message.answer(
         "Давай настроим профиль — я буду учитывать это при рекомендациях.\n\n"
         "1️⃣ Укажи свой балл IELTS (например, 6.5):",
         reply_markup=skip_keyboard("profile_skip:ielts"),
     )
+
+
+@dp.message(Command("profile"))
+async def cmd_profile(message: types.Message, state: FSMContext):
+    await start_profile(message, state)
+
+
+@dp.callback_query(F.data == "profile:start")
+async def cb_profile_start(call: types.CallbackQuery, state: FSMContext):
+    """Онбординг: кнопка «Настроить профиль» из стартового меню."""
+    await call.answer()
+    await log_event(call.from_user.id, "onboarding_profile")
+    await start_profile(call.message, state)
 
 
 @dp.message(ProfileStates.waiting_ielts, F.text)
@@ -1136,6 +1156,64 @@ async def send_open_alerts():
         logging.error(f"Ошибка в задаче уведомлений об открытии приёма: {e}", exc_info=True)
 
 
+DIGEST_PER_USER = 5
+
+
+async def build_digest(user_id: int, new_grants: list) -> Optional[str]:
+    """Текст дайджеста для одного пользователя: под профиль, если он заполнен, иначе просто свежие."""
+    lang = await get_user_lang(user_id)
+    profile = await get_user_profile(user_id)
+    picked, personal = [], False
+    if has_profile(profile):
+        res = match_grants(new_grants, profile)
+        picked = [i["grant"] for i in res["matches"]][:DIGEST_PER_USER]
+        personal = bool(picked)
+    if not picked:
+        picked = new_grants[:DIGEST_PER_USER]
+    if not picked:
+        return None
+    head = tr(lang, "digest_title") + "\n" + tr(lang, "digest_for_you" if personal else "digest_all") + "\n\n"
+    body = "\n---\n\n".join(grant_card_text(g, lang) for g in picked)
+    return (head + body + "\n\n" + tr(lang, "digest_foot"))[:4000]
+
+
+async def send_weekly_digest():
+    """Раз в неделю: подписчикам Telegram — гранты, появившиеся за 7 дней (под профиль, если он есть)."""
+    try:
+        new_grants = await get_grants_added_since(days=7)
+        if not new_grants:
+            logging.info("Дайджест: за неделю новых грантов нет — рассылка пропущена.")
+            return
+        sent = 0
+        for user_id in await get_all_users():
+            if user_id >= 10**12:   # посетители сайта без Telegram
+                continue
+            text = await build_digest(user_id, new_grants)
+            if not text:
+                continue
+            try:
+                await bot.send_message(user_id, text, parse_mode="HTML", disable_web_page_preview=True)
+                sent += 1
+                await asyncio.sleep(0.05)   # лимит Telegram ~30 сообщений в секунду
+            except TelegramForbiddenError:
+                await unsubscribe_user(user_id)
+            except Exception as e:
+                logging.error(f"Дайджест: не отправлен пользователю {user_id}: {e}")
+        await log_event(0, "weekly_digest", {"sent": sent, "grants": len(new_grants)})
+        logging.info(f"Дайджест отправлен: {sent} пользователям, новых грантов {len(new_grants)}.")
+    except Exception as e:
+        logging.error(f"Ошибка еженедельного дайджеста: {e}", exc_info=True)
+
+
+@dp.message(Command("digest"))
+@admin_only
+async def cmd_digest(message: types.Message):
+    """Администратор: посмотреть свой дайджест, не дожидаясь понедельника."""
+    new_grants = await get_grants_added_since(days=7)
+    text = await build_digest(message.from_user.id, new_grants)
+    await message.answer(text or "За неделю новых грантов нет.", parse_mode="HTML", disable_web_page_preview=True)
+
+
 async def backup_and_send():
     """Копия базы перед очисткой; файл уходит администратору в Telegram — это и есть внешний бэкап."""
     try:
@@ -1245,6 +1323,7 @@ async def main():
     scheduler.add_job(daily_cleanup, "cron", hour=0, minute=1, timezone="UTC", id="daily_cleanup", replace_existing=True)
     scheduler.add_job(weekly_link_check, "cron", day_of_week="mon", hour=3, minute=0, timezone="UTC", id="weekly_links", replace_existing=True)
     scheduler.add_job(refresh_usage_snapshot, "cron", hour=0, minute=5, timezone="UTC", id="usage_snapshot", replace_existing=True)
+    scheduler.add_job(send_weekly_digest, "cron", day_of_week="mon", hour=10, minute=0, id="weekly_digest", replace_existing=True)
     scheduler.start()
     asyncio.create_task(daily_cleanup())  # и сразу при старте: бот мог быть выключен в полночь
 

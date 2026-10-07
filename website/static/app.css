@@ -655,6 +655,8 @@ html::-webkit-scrollbar { display: none; width: 0; }
 .aud-bars .n { background: rgba(42,171,238,.8); }
 .aud-legend { display: flex; gap: 16px; margin-top: 8px; font-size: .75rem; color: var(--muted-fg); }
 .aud-sub { margin: 26px 0 6px; font-size: 1rem; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.card-head h3 { margin: 0; }
 .recent-wrap { overflow-x: auto; }
 .recent { width: 100%; border-collapse: collapse; font-size: .82rem; }
 .recent th { text-align: left; font-weight: 400; color: var(--muted-fg); padding: 6px 10px; border-bottom: 1px solid var(--border); }
