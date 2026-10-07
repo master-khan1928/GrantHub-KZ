@@ -1,0 +1,15 @@
+[project]
+name = "granthub"
+version = "1.0.0"
+description = "GrantHub: Telegram-бот, сайт и ИИ-сканер грантов"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+exclude = [".venv", "backups", "data", "logs"]
+
+[tool.ruff.lint]
+# E/W — стиль, F — реальные ошибки (неиспользуемые импорты, неопределённые имена)
+select = ["E", "F", "W"]
+ignore = ["E501", "E402", "E731", "E741", "W291", "W293"]

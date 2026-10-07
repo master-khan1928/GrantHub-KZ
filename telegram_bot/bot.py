@@ -1078,25 +1078,40 @@ async def broadcast_new_grants(new_grants: list):
             logging.error(f"Ошибка отправки пользователю {user_id}: {e}")
 
 
+_scan_health = {"empty_streak": 0, "fail_streak": 0}   # подряд: пустых сканирований / упавших
+
+
+async def notify_admin(text: str):
+    if not ADMIN_ID:
+        return
+    try:
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        logging.warning(f"Не удалось написать администратору: {e}")
+
+
 async def scheduled_grant_scan():
     try:
         new_grants, expired = await run_scan_cycle()
         logging.info(f"Плановое сканирование завершено: новых {len(new_grants)}, снято истёкших {expired}")
-        if ADMIN_ID:
-            try:
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"🗓 Плановое сканирование: новых <b>{len(new_grants)}</b>, снято истёкших <b>{expired}</b>.",
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
+        _scan_health["fail_streak"] = 0
+        _scan_health["empty_streak"] = _scan_health["empty_streak"] + 1 if not new_grants else 0
+        text = f"🗓 Плановое сканирование: новых <b>{len(new_grants)}</b>, снято истёкших <b>{expired}</b>."
+        if _scan_health["empty_streak"] >= 2:   # два пустых подряд — обычно лимиты LLM или бан поиска, а не «всё найдено»
+            st = ai_scanner.last_scan_stats or {}
+            text += (f"\n\n⚠️ <b>Уже {_scan_health['empty_streak']} сканирования подряд без новых грантов.</b> "
+                     f"Проверь логи: сниппетов {st.get('snippets', '?')}, кандидатов {st.get('candidates', '?')}, прошло проверку {st.get('valid', '?')}. "
+                     "Частые причины: лимит Groq (429), пустые ответы модели, блокировка поиска.")
+        await notify_admin(text)
     except Exception as e:
+        _scan_health["fail_streak"] += 1
         logging.error(f"Ошибка в плановом сканировании грантов: {e}", exc_info=True)
+        await notify_admin(f"❌ <b>Плановое сканирование упало</b> ({_scan_health['fail_streak']} подряд): {esc(str(e)[:300])}\n"
+                           "Каталог не обновился. Логи: <code>railway logs</code>, ручной запуск: /scan")
 
 
 async def send_deadline_reminders():
-    """Раз в день проверяет избранные гранты с дедлайном за 7/3/1 день и напоминает."""
+    """Раз в день проверяет избранные гранты с дедлайном за 14/7/3/1 день и напоминает."""
     try:
         favorites = await get_favorites_with_deadlines()
         today = datetime.date.today()
@@ -1108,7 +1123,7 @@ async def send_deadline_reminders():
                 continue
 
             days_left = (deadline - today).days
-            if days_left not in (7, 3, 1):
+            if days_left not in (14, 7, 3, 1):
                 continue
 
             can_send = await mark_reminder_sent(row["user_id"], row["grant_id"], days_left)

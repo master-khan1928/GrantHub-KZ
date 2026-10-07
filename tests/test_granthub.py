@@ -175,7 +175,8 @@ class DatabaseTests(unittest.TestCase):
         c = sqlite3.connect(db.DB_NAME)
         c.execute("UPDATE grants SET deadline_date = ? WHERE id IN (?, ?, ?)", (day(-5), *ids[:3]))
         c.execute("INSERT INTO favorites (user_id, grant_id) VALUES (1, ?)", (ids[0],))
-        c.commit(); c.close()
+        c.commit()
+        c.close()
         self.assertEqual(run(db.cleanup_expired_grants()), 1)
         self.assertEqual(self.rows("SELECT COUNT(*) FROM grants WHERE id = ?", ids[0])[0][0], 0)
         self.assertEqual(self.rows("SELECT COUNT(*) FROM favorites WHERE grant_id = ?", ids[0])[0][0], 0)
@@ -320,7 +321,8 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(a["daily"][-1]["active"], 1)
 
     def test_admin_users_csv_and_digest_source(self):
-        run(db.add_user(779)); run(db.log_event(779, "start"))   # пользователь бота
+        run(db.add_user(779))
+        run(db.log_event(779, "start"))   # пользователь бота
         self.assertEqual(self.client.get("/api/admin/users.csv").status_code, 401)
         r = self.client.get("/api/admin/users.csv", headers={"X-Admin-Token": "test-token"})
         self.assertEqual(r.status_code, 200)
@@ -331,9 +333,32 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(fresh), 1)
         self.assertTrue(all(g["is_active"] == 1 for g in fresh))
 
+    def test_favorite_status_and_ics(self):
+        gid = self.client.get("/api/grants?category=all&limit=1").json()["items"][0]["id"]
+        self.client.post(f"/api/favorites/{gid}")
+        r = self.client.patch(f"/api/favorites/{gid}/status", json={"status": "submitted"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.client.patch(f"/api/favorites/{gid}/status", json={"status": "weird"}).status_code, 422)
+        items = self.client.get("/api/favorites").json()["items"]
+        self.assertEqual(next(g for g in items if g["id"] == gid)["fav_status"], "submitted")
+        ics = self.client.get("/api/favorites.ics")
+        self.assertEqual(ics.status_code, 200)
+        self.assertIn("text/calendar", ics.headers["content-type"])
+        self.assertIn("BEGIN:VEVENT", ics.text)
+        self.assertIn("TRIGGER:-P7D", ics.text)
+        self.assertEqual(self.client.post("/api/events/share", json={"grant_id": gid}).status_code, 200)
+
+    def test_schema_migrations_recorded(self):
+        with sqlite3.connect(db.DB_NAME) as c:
+            self.assertGreaterEqual(c.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0], 1)
+            self.assertEqual(c.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
+            cols = {r[1] for r in c.execute("PRAGMA table_info(favorites)")}
+            self.assertIn("status", cols)
+
     def test_public_usage_counter(self):
-        run(db.add_user(778)); run(db.log_event(778, "start"))                       # пользователь бота
-        anon = self.client.get("/api/grants?category=all&limit=1")                   # посетитель сайта только смотрел
+        run(db.add_user(778))
+        run(db.log_event(778, "start"))                                              # пользователь бота
+        self.client.get("/api/grants?category=all&limit=1")                          # посетитель сайта только смотрел
         snap = run(db.refresh_usage_snapshot())
         self.assertGreaterEqual(snap["telegram"], 1)
         self.assertEqual(snap["people"], snap["telegram"] + snap["site"])

@@ -23,7 +23,7 @@
     '[data-degree="all"] b': 'choice.all', '[data-degree="all"] > span:nth-of-type(2)': 'choice.all.desc',
     '[data-back="region"]': 'back.regions', '[data-back="degree"]': 'back.change', '#loadMore': 'loadmore',
     '[data-view="search"] .eyebrow': 'search.eyebrow', '[data-view="search"] .vlead': 'search.lead', '#searchHint': 'search.hint',
-    '[data-view="favorites"] .eyebrow': 'fav.eyebrow', '[data-view="favorites"] .vlead': 'fav.lead', '#favEmpty p': 'fav.empty', '#favEmpty .btn': 'fav.open',
+    '[data-view="favorites"] .eyebrow': 'fav.eyebrow', '[data-view="favorites"] .vlead': 'fav.lead', '#favEmpty p': 'fav.empty', '#favEmpty .btn': 'fav.open', '#favCal': 'fav.calendar',
     '[data-view="chat"] .eyebrow': 'chat.eyebrow', '[data-view="chat"] .vlead': 'chat.lead', '.chat-head b': 'chat.name', '#chatStatus': 'chat.status', '#chatLog .msg.ai .bubble': 'chat.hello',
     '[data-view="profile"] .eyebrow': 'profile.eyebrow', '[data-view="profile"] .vlead': 'profile.lead',
     '#profileForm button[type="submit"]': 'save', '#profileClear': 'clear',
@@ -240,9 +240,11 @@
         <div class="g-actions">
           ${g.status === 'upcoming' ? `<button class="fav bell ${state.alertIds.has(g.id) ? 'on' : ''}" data-bell="${g.id}" aria-label="${t('bell.title')}" title="${t('bell.title')}">${icon.bell}</button>` : ''}
           <button class="cmp-check ${inCmp ? 'on' : ''}" data-cmp="${g.id}" title="${t('card.compare')}" aria-label="${t('card.compare')}"><svg viewBox="0 0 24 24"><path d="M4 6h7v12H4zM13 6h7v12h-7z"/></svg><em>${t('card.compare')}</em></button>
+          <button class="fav share" data-share="${g.id}" aria-label="${t('card.share')}" title="${t('card.share')}"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg><em>${t('card.share')}</em></button>
           <button class="fav ${g.is_favorite ? 'on' : ''}" data-fav="${g.id}" aria-label="${t('fav.btn')}" title="${t('fav.btn')}">${icon.star}<em>${t('card.save')}</em></button>
         </div>
       </div>
+      ${g.fav_status ? `<label class="fav-status"><span>${t('fav.status')}</span><select data-status="${g.id}">${['saved', 'preparing', 'submitted', 'result'].map(s => `<option value="${s}" ${g.fav_status === s ? 'selected' : ''}>${t('fav.status.' + s)}</option>`).join('')}</select></label>` : ''}
     </article>`;
   };
   const renderGrid = (grid, items, append = false) => {
@@ -410,13 +412,30 @@
   });
 
   // ---------- Favorites ----------
+  // ---------- Поделиться: ссылка на страницу гранта (с превью для Telegram и WhatsApp) ----------
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-share]'); if (!btn) return;
+    const g = state.grants.get(Number(btn.dataset.share)); const url = `${location.origin}/grant/${btn.dataset.share}`;
+    try {
+      if (navigator.share) await navigator.share({ title: g?.name || 'GrantHub', text: g?.name || '', url });
+      else { await navigator.clipboard.writeText(url); toast(t('card.shareCopied'), 'ok'); }
+      api('/api/events/share', { method: 'POST', body: { grant_id: Number(btn.dataset.share) } }).catch(() => {});
+    } catch (err) { if (err?.name !== 'AbortError') toast(err.message, 'err'); }
+  });
+  // ---------- Статус заявки по избранному гранту ----------
+  document.addEventListener('change', async (e) => {
+    const sel = e.target.closest('select[data-status]'); if (!sel) return;
+    try { await api(`/api/favorites/${sel.dataset.status}/status`, { method: 'PATCH', body: { status: sel.value } }); toast(t('fav.statusSaved'), 'ok'); }
+    catch (err) { toast(err.message, 'err'); }
+  });
   const loadFavorites = async () => {
     const grid = $('#favGrid'); skeletons(grid, 3); $('#favEmpty').hidden = true;
     try {
       const d = await api('/api/favorites');
       grid.innerHTML = '';
-      if (!d.items.length) { $('#favEmpty').hidden = false; return; }
+      if (!d.items.length) { $('#favEmpty').hidden = false; $('#favCal').hidden = true; return; }
       renderGrid(grid, d.items);
+      $('#favCal').hidden = !d.items.some(g => g.deadline_date);
     } catch (err) { grid.innerHTML = ''; toast(err.message, 'err'); }
   };
 

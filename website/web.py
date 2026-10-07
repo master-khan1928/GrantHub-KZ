@@ -41,7 +41,7 @@ from core.database import (  # noqa: E402
     get_recent_grants, get_all_active_grants,
     save_ai_answer, search_grants, set_answer_rating, set_grant_active, set_user_profile,
     create_link_code, consume_link_code, get_link_code, get_account_by_id, is_linked, get_audience_stats,
-    get_public_usage, get_audience_rows,
+    get_public_usage, get_audience_rows, set_favorite_status,
 )
 from core.geo import normalize_country  # noqa: E402
 from core.matching import has_profile, match_grants  # noqa: E402
@@ -202,6 +202,7 @@ def _grant_public(g: dict, fav: bool = False) -> dict:
         "coverage": g["coverage"], "requirements": g["requirements"], "deadline": g["deadline"],
         "deadline_date": g.get("deadline_date"), "link": g["link"], "source": g.get("source"),
         "status": g.get("status") or "unknown", "is_favorite": fav,
+        "fav_status": g.get("fav_status"),
         "application_start_date": g.get("application_start_date"), "is_ongoing": bool(g.get("is_ongoing")),
         "recurrence_period": g.get("recurrence_period"),
         "days_left": _days_left(g.get("deadline_date")),
@@ -432,10 +433,67 @@ async def api_grant(grant_id: int, uid: int = Depends(current_user)):
     return _grant_public(g, await is_favorite(uid, grant_id))
 
 
+class ShareIn(BaseModel):
+    grant_id: int
+
+
+@app.post("/api/events/share")
+async def api_event_share(data: ShareIn, uid: int = Depends(current_user)):
+    await log_event(uid, "share", {"grant_id": data.grant_id})
+    return {"ok": True}
+
+
 @app.get("/api/favorites")
 async def api_favorites(uid: int = Depends(current_user)):
     favs = await get_user_favorites(uid)
     return {"items": [_grant_public(g, True) for g in favs]}
+
+
+class FavStatusIn(BaseModel):
+    status: str = Field(pattern="^(saved|preparing|submitted|result)$")
+
+
+@app.patch("/api/favorites/{grant_id}/status")
+async def api_fav_status(grant_id: int, data: FavStatusIn, uid: int = Depends(current_user)):
+    if not await set_favorite_status(uid, grant_id, data.status):
+        raise HTTPException(404, "Гранта нет в избранном")
+    await log_event(uid, "fav_status", {"grant_id": grant_id, "status": data.status})
+    return {"ok": True, "status": data.status}
+
+
+def _ics_escape(s: str) -> str:
+    return str(s or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+@app.get("/api/favorites.ics")
+async def api_favorites_ics(uid: int = Depends(current_user)):
+    """Дедлайны избранного файлом календаря: импортируется в Google Calendar, Apple Calendar, Outlook.
+    Событие на весь день в дату дедлайна с напоминаниями за 7 и 1 день."""
+    favs = [g for g in await get_user_favorites(uid) if g.get("deadline_date")]
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//GrantHub//Deadlines//RU", "CALSCALE:GREGORIAN",
+             "METHOD:PUBLISH", "X-WR-CALNAME:GrantHub — дедлайны"]
+    for g in favs:
+        try:
+            d = datetime.date.fromisoformat(g["deadline_date"])
+        except ValueError:
+            continue
+        end = d + datetime.timedelta(days=1)
+        url = f"{PUBLIC_URL}/grant/{g['id']}" if PUBLIC_URL else (g.get("link") or "")
+        lines += [
+            "BEGIN:VEVENT", f"UID:granthub-{g['id']}-{uid}@granthub", f"DTSTAMP:{stamp}",
+            f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{end.strftime('%Y%m%d')}",
+            f"SUMMARY:{_ics_escape('Дедлайн: ' + g['name'])}",
+            f"DESCRIPTION:{_ics_escape((g.get('coverage') or '') + chr(10) + (g.get('link') or ''))}",
+            f"URL:{_ics_escape(url)}",
+            "BEGIN:VALARM", "TRIGGER:-P7D", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_escape('Через 7 дней дедлайн: ' + g['name'])}", "END:VALARM",
+            "BEGIN:VALARM", "TRIGGER:-P1D", "ACTION:DISPLAY", f"DESCRIPTION:{_ics_escape('Завтра дедлайн: ' + g['name'])}", "END:VALARM",
+            "END:VEVENT",
+        ]
+    lines.append("END:VCALENDAR")
+    body = "\r\n".join(lines) + "\r\n"
+    return Response(body, media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="granthub-deadlines.ics"'})
 
 
 @app.post("/api/favorites/{grant_id}")

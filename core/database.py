@@ -1,5 +1,6 @@
 import difflib
 import datetime
+import logging
 import hashlib
 import html
 import json
@@ -98,9 +99,34 @@ KZ_SEED_GRANTS = [
 ]
 
 
+# Нумерованные миграции схемы (см. init_db): {версия: [SQL, ...]}
+SCHEMA_MIGRATIONS = {
+    1: [
+        "ALTER TABLE favorites ADD COLUMN status TEXT DEFAULT 'saved'",   # saved | preparing | submitted | result
+        "ALTER TABLE favorites ADD COLUMN status_at TEXT",
+    ],
+}
+
+FAVORITE_STATUSES = ("saved", "preparing", "submitted", "result")
+
+
 async def init_db():
     """Создает таблицы, накатывает миграции и заполняет стартовыми данными."""
     async with aiosqlite.connect(DB_NAME) as db:
+        # WAL: бот, сайт и сканер пишут в одну базу — без WAL читатели блокируют писателя («database is locked»).
+        # Режим сохраняется в файле базы, достаточно включить один раз.
+        try:
+            await db.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:   # сетевой диск или read-only — работаем как раньше
+            logging.warning(f"WAL не включён: {e}")
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS grants (
@@ -250,12 +276,29 @@ async def init_db():
             "ALTER TABLE grants ADD COLUMN deadline_confirmed INTEGER DEFAULT 0",  # дата найдена на странице гранта или подтверждена оператором
             "ALTER TABLE grants ADD COLUMN link_failures INTEGER DEFAULT 0",  # сколько проверок подряд ссылка не открывается
         ]
-        for sql in migrations:
+        for sql in migrations:   # базовый слой: идемпотентные ALTER для баз, созданных до нумерации
             try:
                 await db.execute(sql)
                 await db.commit()
             except Exception:
                 pass  # колонка уже существует
+
+        # Нумерованные миграции: каждая применяется один раз, номер записывается в schema_migrations.
+        # Новые изменения схемы добавляйте сюда следующим номером, а не в список выше.
+        async with db.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations") as cur:
+            current = (await cur.fetchone())[0]
+        for version, steps in sorted(SCHEMA_MIGRATIONS.items()):
+            if version <= current:
+                continue
+            for sql in steps:
+                try:
+                    await db.execute(sql)
+                except Exception as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
+            await db.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
+            await db.commit()
+            logging.info(f"Миграция схемы {version} применена")
 
         async with db.execute("SELECT COUNT(*) FROM grants") as cursor:
             count = (await cursor.fetchone())[0]
@@ -1469,6 +1512,19 @@ async def add_favorite(user_id: int, grant_id: int) -> bool:
             return False
 
 
+async def set_favorite_status(user_id: int, grant_id: int, status: str) -> bool:
+    """Прогресс заявки по избранному гранту: готовлю документы → подал → есть ответ."""
+    if status not in FAVORITE_STATUSES:
+        raise ValueError(f"Неизвестный статус: {status}")
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "UPDATE favorites SET status = ?, status_at = ? WHERE user_id = ? AND grant_id = ?",
+            (status, datetime.datetime.now().isoformat(timespec="seconds"), user_id, grant_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
 async def remove_favorite(user_id: int, grant_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM favorites WHERE user_id = ? AND grant_id = ?", (user_id, grant_id))
@@ -1488,7 +1544,7 @@ async def get_user_favorites(user_id: int) -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """
-            SELECT g.* FROM grants g
+            SELECT g.*, COALESCE(f.status, 'saved') AS fav_status, f.status_at AS fav_status_at FROM grants g
             JOIN favorites f ON f.grant_id = g.id
             WHERE f.user_id = ?
             ORDER BY f.added_at DESC
