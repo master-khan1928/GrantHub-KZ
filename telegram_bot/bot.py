@@ -64,6 +64,7 @@ from core.database import (
 )
 from core.geo import flag_emoji
 from core.matching import has_profile, match_grants
+from core.text import clean_source
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -248,7 +249,7 @@ def lang_menu() -> InlineKeyboardMarkup:
 def grant_card_text(g: dict, lang: str = "ru") -> str:
     st = g.get("status") or ""
     status = tr(lang, st) if st in ("open", "upcoming") else None
-    source = g.get("source")
+    source = clean_source(g.get("source"), g.get("link"))
     extra = ""
     if status:
         extra += f"📌 <b>{tr(lang, 'status')}:</b> {status}\n"

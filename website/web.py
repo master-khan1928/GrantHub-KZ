@@ -44,6 +44,7 @@ from core.database import (  # noqa: E402
     get_public_usage, get_audience_rows, set_favorite_status,
 )
 from core.geo import normalize_country  # noqa: E402
+from core.text import clean_source  # noqa: E402
 from core.matching import has_profile, match_grants  # noqa: E402
 
 import aiosqlite  # noqa: E402
@@ -200,7 +201,7 @@ def _grant_public(g: dict, fav: bool = False) -> dict:
         "id": g["id"], "name": g["name"], "category": "kz" if country == "KZ" else "abroad", "degree": g["degree"],
         "country_code": country, "provider_country": g.get("provider_country"), "funding": g.get("funding") or "unknown",
         "coverage": g["coverage"], "requirements": g["requirements"], "deadline": g["deadline"],
-        "deadline_date": g.get("deadline_date"), "link": g["link"], "source": g.get("source"),
+        "deadline_date": g.get("deadline_date"), "link": g["link"], "source": clean_source(g.get("source"), g.get("link")),
         "status": g.get("status") or "unknown", "is_favorite": fav,
         "fav_status": g.get("fav_status"),
         "application_start_date": g.get("application_start_date"), "is_ongoing": bool(g.get("is_ongoing")),

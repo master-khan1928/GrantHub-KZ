@@ -14,7 +14,7 @@
     '#nav a[data-nav="chat"]': 'nav.chat', '#nav a[data-nav="profile"]': 'nav.profile', '#adminNav': 'nav.admin', '#nav a[data-nav="match"]': 'nav.match',
     '[data-view="match"] .eyebrow': 'match.eyebrow', '[data-view="match"] .vlead': 'match.lead', '#matchNearTitle': 'match.nearTitle', '#matchNearSub': 'match.nearSub',
     '#tgTitle': 'tg.title', '#tgWay1': 'tg.way1', '#tgGetCode': 'tg.get', '#tgOpenBot': 'tg.open', '#tgWay2': 'tg.way2', '#tgConfirm': 'tg.confirm', '#tgLinkedText': 'tg.linked',
-    '.topbar-actions .pill--white': 'pill.ask', '#loginBtn': 'login',
+    '.topbar-actions .pill--white': 'pill.ask', '#loginBtn': 'login', '#setThemeLbl': 'settings.theme', '#setLangLbl': 'settings.lang', '#fToggleLbl': 'filters.btn',
     '[data-view="catalog"] .eyebrow': 'catalog.results', '[data-view="catalog"] .vlead': 'catalog.lead',
     '[data-region="kz"] b': 'choice.kz', '[data-region="kz"] > span:nth-of-type(2)': 'choice.kz.desc',
     '[data-region="abroad"] b': 'choice.abroad', '[data-region="abroad"] > span:nth-of-type(2)': 'choice.abroad.desc',
@@ -167,6 +167,21 @@
     };
     requestAnimationFrame(tick);
   };
+  // ---------- Настройки в шапке: тема и язык в одном меню ----------
+  const setBtn = $('#settingsBtn'), setPop = $('#settingsPop');
+  const setOpen = (on) => { if (!setPop) return; setPop.hidden = !on; setBtn.setAttribute('aria-expanded', on ? 'true' : 'false'); };
+  setBtn?.addEventListener('click', (e) => { e.stopPropagation(); setOpen(setPop.hidden); });
+  document.addEventListener('click', (e) => { if (setPop && !setPop.hidden && !e.target.closest('#settings')) setOpen(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && setPop && !setPop.hidden) { setOpen(false); setBtn.focus(); } });
+  // ---------- Фильтры на телефоне: свёрнуты в одну кнопку со счётчиком ----------
+  const fBox = $('#filters'), fToggle = $('#fToggle');
+  const fCount = () => {
+    if (!fBox || !fToggle) return;
+    const n = [...fBox.querySelectorAll('select[data-filter]')].filter(el => el.dataset.filter !== 'sort' && el.classList.contains('is-set')).length;
+    const c = $('#fCount'); c.textContent = n; c.hidden = !n;
+  };
+  fToggle?.addEventListener('click', () => { const on = !fBox.classList.contains('open'); fBox.classList.toggle('open', on); fToggle.setAttribute('aria-expanded', on ? 'true' : 'false'); });
+  if (fBox) new MutationObserver(fCount).observe(fBox, { subtree: true, attributes: true, attributeFilter: ['class'] });
   // Кнопка в состоянии загрузки: спиннер вместо текста, ширина сохраняется
   const busy = async (btn, fn) => {
     if (!btn) return fn();
@@ -211,7 +226,7 @@
     bell: '<svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7Z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>',
     ext: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>',
   };
-  const statusTag = (g) => g.status === 'open' ? `<span class="tag open">${t('tag.open')}</span>` : g.status === 'upcoming' ? `<span class="tag upcoming">${t('tag.upcoming')}${g.application_start_date ? ' · ' + t('tag.from') + ' ' + esc(g.application_start_date) : ''}</span>` : '';
+  const statusTag = (g) => g.status === 'open' ? `<span class="tag open">${t('tag.open')}</span>` : g.status === 'upcoming' ? `<span class="tag upcoming">${t('tag.upcoming')}${g.application_start_date ? ' · ' + t('tag.from') + ' ' + humanDate(g.application_start_date) : ''}</span>` : '';
   const urgentTag = (g) => (g.days_left !== null && g.days_left >= 0 && g.days_left <= 7) ? `<span class="tag urgent">${g.days_left === 0 ? t('tag.today') : g.days_left + ' ' + t('tag.days')}</span>` : '';
   const degreeLabel = { bachelor: t('degree.bachelor'), master: t('degree.master'), phd: t('degree.phd'), language: t('degree.language'), all: t('degree.all') };
   const scopeLabel = { kz: t('scope.kz'), abroad: t('scope.abroad'), all: t('scope.all') };
@@ -224,13 +239,25 @@
   const flagOf = (g) => `<span class="flag">${flagEmoji(g.country_code) || ui.globe}</span>`;
   const placeOf = (g) => g.source || countryName(g.country_code) || (g.category === 'kz' ? t('region.kz') : t('region.abroad'));
   const plural = (n) => { if (LANG !== 'ru') return n === 1 ? t('card.day1') : t('card.days'); const m10 = n % 10, m100 = n % 100; if (m10 === 1 && m100 !== 11) return t('card.day1'); if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return t('card.days2'); return t('card.days'); };
+  // Даты по-человечески: «8 окт», для другого года — «8 окт 2027»
+  const mkFmt = (opts) => { try { return new Intl.DateTimeFormat(LANG === 'kz' ? 'kk' : LANG, opts); } catch { return null; } };
+  const fmtShort = mkFmt({ day: 'numeric', month: 'short' }), fmtYear = mkFmt({ day: 'numeric', month: 'short', year: 'numeric' });
+  const humanDate = (iso) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return esc(iso || '');
+    const d = new Date(iso + 'T00:00:00'), f = d.getFullYear() === new Date().getFullYear() ? fmtShort : fmtYear;
+    if (!f) return iso;
+    return esc(f.format(d).replace(/\s?г\.$/, '').replace(/\.(?=\s|$)/, ''));
+  };
+  const relDays = (d) => d === 0 ? t('card.today') : d === 1 ? t('card.tomorrow') : `${d} ${plural(d)}`;
+  // Срок — строкой под названием: цветной чип (зелёный > 30 дней, янтарный 7–30, красный < 7) и дата
   const deadlineBlock = (g) => {
     const d = g.days_left;
-    if (g.is_ongoing) return `<div class="g-dl"><b class="tbd">${t('card.ongoing')}</b><span>${esc(g.deadline)}</span></div>`;
-    if (d === null || d === undefined) return `<div class="g-dl"><b class="tbd">${g.recurrence_period === 'yearly' ? t('card.yearly') : t('card.tbd')}</b><span>${esc(g.deadline)}</span></div>`;
-    if (d < 0) return `<div class="g-dl"><b class="tbd">${t('card.expired')}</b><span>${esc(g.deadline_date)}</span></div>`;
-    const cls = d <= 7 ? 'hot' : d <= 30 ? 'soon' : '';
-    return `<div class="g-dl"><b class="${cls}">${d === 0 ? t('card.today') : d}</b><span>${d === 0 ? esc(g.deadline_date) : plural(d) + ' · ' + esc(g.deadline_date)}</span></div>`;
+    const note = (txt) => txt ? `<span class="g-when-note" title="${esc(txt)}">${esc(txt)}</span>` : '';
+    if (g.is_ongoing) return `<div class="g-when"><span class="chip ok">${icon.clock}${t('card.ongoing')}</span>${note(g.deadline)}</div>`;
+    if (d === null || d === undefined) return `<div class="g-when"><span class="chip">${icon.clock}${g.recurrence_period === 'yearly' ? t('card.yearly') : t('card.tbd')}</span>${note(g.deadline)}</div>`;
+    if (d < 0) return `<div class="g-when"><span class="chip">${t('card.expired')}</span><span class="g-when-note">${humanDate(g.deadline_date)}</span></div>`;
+    const cls = d <= 7 ? 'hot' : d <= 30 ? 'soon' : 'ok';
+    return `<div class="g-when"><span class="chip ${cls}">${icon.clock}${relDays(d)}</span><span class="g-when-note">${t('card.until', { date: humanDate(g.deadline_date) })}</span></div>`;
   };
   const cardHTML = (g, i = 0) => {
     const inCmp = state.compare.has(g.id);
@@ -238,7 +265,7 @@
     <article class="gcard" data-id="${g.id}" style="--i:${i}">
       <div class="g-head"><span class="g-src" title="${esc(placeOf(g))}">${esc(placeOf(g))}</span>${flagOf(g)}</div>
       <div class="g-main"><h3 class="g-title"><a href="/grant/${g.id}">${esc(g.name)}</a></h3>${deadlineBlock(g)}</div>
-      <div class="g-tags"><span class="tag">${degreeLabel[g.degree] || g.degree}</span>${statusTag(g)}${urgentTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}${Object.entries(g.gaps || {}).map(([k, n]) => `<span class="tag gap">${t('gap.' + k, { n })}</span>`).join('')}</div>
+      <div class="g-tags"><span class="tag">${degreeLabel[g.degree] || g.degree}</span>${statusTag(g)}${fundingTag(g)}${(g.why || []).map(w => `<span class="tag open">${t('why.' + w)}</span>`).join('')}${Object.entries(g.gaps || {}).map(([k, n]) => `<span class="tag gap">${t('gap.' + k, { n })}</span>`).join('')}</div>
       <div class="g-row">${icon.money}<div><b>${t('card.coverage')}:</b> ${esc(g.coverage)}</div></div>
       <div class="g-row g-req" data-more="${t('card.more')}">${icon.list}<div><b>${t('card.requirements')}:</b> ${esc(g.requirements)}</div></div>
       <div class="g-foot">
@@ -264,7 +291,8 @@
     }));
     void base;
   };
-  const skeletons = (grid, n = 6) => grid.innerHTML = Array.from({ length: n }, () => '<div class="skeleton"></div>').join('');
+  const SKEL = '<div class="skeleton" aria-hidden="true"><i class="sk w30"></i><i class="sk h20 w85"></i><i class="sk chip-s"></i><i class="sk w100"></i><i class="sk w60"></i><div class="sk-foot"><i class="sk btn-s"></i><i class="sk dot"></i></div></div>';
+  const skeletons = (grid, n = 6) => grid.innerHTML = Array.from({ length: n }, () => SKEL).join('');
 
   // ---------- Favorites toggle (delegated) ----------
   const updateFavBadge = () => {
@@ -885,7 +913,7 @@
   });
 
   // ---------- Home (персональная главная) ----------
-  const dlLine = (g) => { const d = g.days_left; const cls = d != null && d <= 7 ? 'hot' : d != null && d <= 30 ? 'soon' : ''; return `<li data-open="${g.id}"><span class="dl-days ${cls}">${d == null ? '—' : d === 0 ? t('card.today') : d}</span><span class="dl-name">${esc(g.name)} ${flagOf(g)}</span><span class="dl-meta">${esc(g.deadline_date || g.deadline)}</span></li>`; };
+  const dlLine = (g) => { const d = g.days_left; const cls = d != null && d <= 7 ? 'hot' : d != null && d <= 30 ? 'soon' : ''; return `<li data-open="${g.id}"><span class="dl-days ${cls}">${d == null ? '—' : d === 0 ? t('card.today') : d}</span><span class="dl-name">${esc(g.name)} ${flagOf(g)}</span><span class="dl-meta">${g.deadline_date ? humanDate(g.deadline_date) : esc(g.deadline || '')}</span></li>`; };
   const loadHome = async () => {
     try {
       const h = await api('/api/home');
@@ -896,13 +924,24 @@
       const scanning = sc.phase && sc.phase !== 'idle' && sc.phase !== 'done';
       $('#homeScan').innerHTML = scanning ? `<span class="scan-live"><i></i>${t('home.scan')}: ${sc.done}/${sc.total}</span>` : `${t('home.scanIdle')}${sc.last ? ' · ' + t('live.last').toLowerCase() + ' ' + esc(String(sc.last).replace('T', ' ').slice(0, 16)) : ''}`;
       const tiles = [
-        [h.strong_matches ?? h.matches.length, t('home.matches'), 'brand'], [h.total_active, t('home.active')], [h.favorites_count, t('home.favs')], [h.completeness + '%', t('home.profile'), '', h.completeness],
+        { v: h.strong_matches ?? h.matches.length, l: t('home.matches'), cls: 'brand' },
+        { v: h.total_active, l: t('home.active') },
+        h.favorites_count ? { v: h.favorites_count, l: t('home.favs') } : { cta: 'catalog', l: t('home.favsCta'), sub: t('home.favsCtaSub') },
+        h.completeness ? { v: h.completeness + '%', l: t('home.profile'), bar: h.completeness } : { cta: 'profile', l: t('home.profileCta'), sub: t('home.profileCtaSub') },
       ];
-      $('#homeTiles').innerHTML = tiles.map(([v, l, cls, bar]) => `<div class="tile"><b class="${cls || ''}">${v}</b><span>${l}</span>${bar != null ? `<div class="bar"><i style="--w:${bar}%"></i></div>` : ''}</div>`).join('');
+      $('#homeTiles').innerHTML = tiles.map(x => x.cta
+        ? `<a class="tile tile--cta" href="#${x.cta}" data-nav="${x.cta}"><b class="tile-cta">${x.l}</b><span>${x.sub}</span><i class="tile-arrow" aria-hidden="true">→</i></a>`
+        : `<div class="tile"><b class="${x.cls || ''}">${x.v}</b><span>${x.l}</span>${x.bar != null ? `<div class="bar"><i style="--w:${x.bar}%"></i></div>` : ''}</div>`).join('');
       const tipNav = { profile: 'profile', favorites: 'catalog', deadline: 'favorites', chat: 'chat' }[h.tip] || 'catalog';
       $('#homeTip').innerHTML = `<p class="eyebrow">${t('home.tip')}</p><p>${t('home.tip.' + h.tip)}</p><a href="#${tipNav}" data-nav="${tipNav}" class="btn btn-ghost btn-sm">${t('home.tip.' + h.tip + '.btn')}</a>`;
       $('#homeDlTitle').textContent = h.upcoming_is_favorites ? t('home.deadlinesFav') : t('home.deadlines');
-      $('#homeDl').innerHTML = h.upcoming.length ? h.upcoming.map(dlLine).join('') : `<li><span class="dl-meta">${t('card.tbd')}</span></li>`;
+      $('#homeDl').innerHTML = h.upcoming.length ? h.upcoming.map(dlLine).join('') : (() => {
+        const open = (h.matches || []).filter(g => g.status === 'open').slice(0, 3);
+        open.forEach(g => state.grants.set(g.id, g));
+        return open.length
+          ? `<li class="dl-note">${t('home.dlOpen')}</li>` + open.map(g => `<li data-open="${g.id}"><span class="dl-days open" aria-hidden="true"></span><span class="dl-name">${esc(g.name)} ${flagOf(g)}</span><span class="dl-meta">${t('tag.open')}</span></li>`).join('')
+          : `<li class="dl-note">${t('home.dlEmpty')}</li>`;
+      })();
       h.upcoming.forEach(g => state.grants.set(g.id, g));
       $('#homeForYou').textContent = (h.strong_matches ?? 0) > 0 ? t('home.forYou') : t('home.forYouAnon');
       renderGrid($('#homeGrid'), h.matches);

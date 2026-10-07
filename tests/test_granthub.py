@@ -62,6 +62,17 @@ async def save_candidates(cands: list) -> list:
     return out
 
 
+class TextTests(unittest.TestCase):
+    def test_clean_source(self):
+        from core.text import clean_source
+        self.assertEqual(clean_source("scholarships for kazakhstan students deadline 2026", "https://www.daad.de/x"), "daad.de")
+        self.assertEqual(clean_source("Nazarbayev University", "https://nu.edu.kz"), "Nazarbayev University")
+        self.assertEqual(clean_source("Министерство образования РК", "https://testcenter.kz"), "Министерство образования РК")
+        self.assertEqual(clean_source("Bolashak scholarship", None), "Bolashak scholarship")
+        self.assertIsNone(clean_source("", "https://x.kz"))
+        self.assertIsNone(clean_source("grant for students in kazakhstan", None))
+
+
 class GeoTests(unittest.TestCase):
     def test_normalize_country(self):
         self.assertEqual(normalize_country(" de "), "DE")
