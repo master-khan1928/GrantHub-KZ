@@ -372,6 +372,20 @@ async def init_db():
         # uid — чей это аккаунт (uid сайта или Telegram id). После привязки данные живут под Telegram id.
         await db.execute(
             """
+            CREATE TABLE IF NOT EXISTS usage_daily (
+                date TEXT PRIMARY KEY,          -- локальная дата снимка
+                people INTEGER NOT NULL,        -- сколько людей пользуются проектом (бот + сайт, связанные — один раз)
+                telegram INTEGER NOT NULL,
+                site INTEGER NOT NULL,
+                active_30d INTEGER NOT NULL,
+                favorites INTEGER NOT NULL,
+                ai_questions INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS link_codes (
                 code TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
@@ -1603,6 +1617,58 @@ async def get_audience_stats(days_series: int = 14) -> dict:
         d = (first + datetime.timedelta(days=i)).isoformat()
         out["daily"].append({"date": d, "active": active_by_day.get(d, 0), "new": new_by_day.get(d, 0)})
     return out
+
+
+# --- Публичный счётчик: сколько людей уже пользуются проектом (снимок раз в день) ---
+
+async def refresh_usage_snapshot() -> dict:
+    """Считает реальные цифры по базе и записывает снимок за сегодня (перезаписывает, если уже есть).
+
+    people = пользователи Telegram + аккаунты сайта без привязки + анонимные посетители сайта, которые
+    что-то сделали (поиск, избранное, вопрос ИИ…), а не просто открыли страницу. Привязанные — один раз.
+    """
+    since_30 = _to_utc_str(datetime.datetime.now() - datetime.timedelta(days=30))
+    async with aiosqlite.connect(DB_NAME) as db:
+        async def one(sql, *params):
+            async with db.execute(sql, params) as cur:
+                return (await cur.fetchone())[0]
+        telegram = await one("SELECT COUNT(*) FROM users WHERE user_id < ?", SITE_UID_MIN)
+        accounts = await one("SELECT COUNT(*) FROM web_accounts WHERE uid >= ?", SITE_UID_MIN)
+        anon = await one(
+            """SELECT COUNT(*) FROM users u WHERE u.user_id >= ? AND u.user_id NOT IN (SELECT uid FROM web_accounts)
+               AND EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.user_id AND e.event_type != 'web_visit')""", SITE_UID_MIN)
+        row = {
+            "date": datetime.date.today().isoformat(),
+            "people": telegram + accounts + anon, "telegram": telegram, "site": accounts + anon,
+            "active_30d": await one("SELECT COUNT(DISTINCT user_id) FROM events WHERE created_at >= ?", since_30),
+            "favorites": await one("SELECT COUNT(*) FROM favorites"),
+            "ai_questions": await one("SELECT COUNT(*) FROM events WHERE event_type = 'ai_question'"),
+        }
+        await db.execute(
+            "INSERT OR REPLACE INTO usage_daily (date, people, telegram, site, active_30d, favorites, ai_questions) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (row["date"], row["people"], row["telegram"], row["site"], row["active_30d"], row["favorites"], row["ai_questions"]),
+        )
+        await db.commit()
+    return row
+
+
+async def get_public_usage() -> dict:
+    """Снимок за сегодня (считается один раз в день при первом обращении или по расписанию) + рост за неделю."""
+    today = datetime.date.today().isoformat()
+    cols = ("date", "people", "telegram", "site", "active_30d", "favorites", "ai_questions")
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(f"SELECT {', '.join(cols)} FROM usage_daily WHERE date = ?", (today,)) as cur:
+            r = await cur.fetchone()
+    row = dict(zip(cols, r)) if r else await refresh_usage_snapshot()
+    week_ago = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT people FROM usage_daily WHERE date <= ? ORDER BY date DESC LIMIT 1", (week_ago,)) as cur:
+            w = await cur.fetchone()
+        async with db.execute("SELECT MIN(joined_at) FROM users") as cur:
+            first = (await cur.fetchone())[0]
+    row["week_delta"] = (row["people"] - w[0]) if w else None
+    row["since"] = first[:10] if first else None
+    return row
 
 
 # --- Ответы ИИ и фидбек ---

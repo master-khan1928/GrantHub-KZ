@@ -130,6 +130,8 @@
   fetch(CONTENT.statsEndpoint).then(r => r.ok ? r.json() : null).then(s => {
     if (!s) return; statsData = s;
     $$('[data-stat]').forEach(el => { const k = el.dataset.stat; if (k && s[k] != null) el.textContent = s[k] + (el.dataset.suffix || ''); });
+    const u = s.users || {}, ps = $('#peopleSub');
+    if (ps) ps.textContent = [u.week_delta > 0 ? (L ? L.weekDelta : '+{d} за неделю').replace('{d}', u.week_delta) : '', u.active_30d ? (L ? L.active30 : '{n} активны за месяц').replace('{n}', u.active_30d) : ''].filter(Boolean).join(' · ');
     const last = s.last_checked ? new Date(s.last_checked).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : 'ещё не было';
     const lc = L ? L.lastCheck : 'Последняя проверка', pl = L ? L.plan : 'план';
     $('#statsFoot').textContent = `${lc}: ${s.last_checked ? last : (L ? L.never : 'ещё не было')} · ${pl}: ${s.scan_hours.map(h => String(h).padStart(2, '0') + ':00').join(', ')} (${s.timezone})`;

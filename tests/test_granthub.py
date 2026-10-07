@@ -319,6 +319,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(a["daily"]), 14)
         self.assertGreaterEqual(a["daily"][-1]["active"], 1)
 
+    def test_public_usage_counter(self):
+        run(db.add_user(778)); run(db.log_event(778, "start"))                       # пользователь бота
+        anon = self.client.get("/api/grants?category=all&limit=1")                   # посетитель сайта только смотрел
+        snap = run(db.refresh_usage_snapshot())
+        self.assertGreaterEqual(snap["telegram"], 1)
+        self.assertEqual(snap["people"], snap["telegram"] + snap["site"])
+        self.assertEqual(snap["date"], datetime.date.today().isoformat())
+        usage = run(db.get_public_usage())                                           # второй вызов берёт снимок из базы
+        self.assertEqual(usage["people"], snap["people"])
+        self.assertIsNone(usage["week_delta"])                                        # недельного снимка ещё нет
+        s = self.client.get("/api/stats/public").json()
+        self.assertIn("people", s)
+        self.assertEqual(s["users"]["people"], s["people"])
+
     def test_funnel_visits_and_registrations(self):
         from fastapi.testclient import TestClient
         from website.web import app

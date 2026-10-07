@@ -55,6 +55,8 @@ from core.database import (
     backup_database,
     get_all_active_grants,
     get_audience_stats,
+    get_public_usage,
+    refresh_usage_snapshot,
     create_link_code,
     consume_link_code,
     is_linked,
@@ -164,6 +166,7 @@ T = {
                   "💬 Или просто напиши мне вопрос, как другу.\n"
                   "🧑‍🎓 Заполни /profile — я буду учитывать твои баллы при советах.\n"
                   "🌍 Язык: /lang\n\nШаг 1 из 2: выбери регион обучения 👇"),
+        "people_line": "👥 Нас уже <b>{n}</b> — бот и сайт вместе{delta}.", "people_delta": ", +{d} за неделю",
         "kz_btn": "🇰🇿 Гранты в Казахстане", "abroad_btn": "🌍 Зарубежные гранты", "site_btn": "🌐 Открыть сайт GrantHub",
         "bachelor": "🎓 Бакалавриат", "master": "🏛 Магистратура", "all": "🔎 Показать все уровни", "back_regions": "« Назад к выбору региона",
         "status": "Статус", "source": "Источник", "coverage": "Покрытие", "requirements": "Требования", "deadline": "Дедлайн", "site": "Официальный сайт",
@@ -187,6 +190,7 @@ T = {
                   "💬 Немесе досыңа жазғандай сұрағыңды жаз.\n"
                   "🧑‍🎓 /profile толтыр — кеңес бергенде балдарыңды ескеремін.\n"
                   "🌍 Тіл: /lang\n\n1-қадам / 2: оқу аймағын таңда 👇"),
+        "people_line": "👥 Бізбен бірге <b>{n}</b> адам — бот пен сайт{delta}.", "people_delta": ", аптасына +{d}",
         "kz_btn": "🇰🇿 Қазақстандағы гранттар", "abroad_btn": "🌍 Шетелдік гранттар", "site_btn": "🌐 GrantHub сайтын ашу",
         "bachelor": "🎓 Бакалавриат", "master": "🏛 Магистратура", "all": "🔎 Барлық деңгейді көрсету", "back_regions": "« Аймақ таңдауға оралу",
         "status": "Мәртебе", "source": "Дереккөз", "coverage": "Жабуы", "requirements": "Талаптар", "deadline": "Дедлайн", "site": "Ресми сайт",
@@ -210,6 +214,7 @@ T = {
                   "💬 Or just ask me a question like a friend.\n"
                   "🧑‍🎓 Fill in /profile — I’ll consider your scores in my advice.\n"
                   "🌍 Language: /lang\n\nStep 1 of 2: choose where to study 👇"),
+        "people_line": "👥 <b>{n}</b> people already use the bot and the site{delta}.", "people_delta": ", +{d} this week",
         "kz_btn": "🇰🇿 Grants in Kazakhstan", "abroad_btn": "🌍 Grants abroad", "site_btn": "🌐 Open the GrantHub website",
         "bachelor": "🎓 Bachelor's", "master": "🏛 Master's", "all": "🔎 Show all levels", "back_regions": "« Back to regions",
         "status": "Status", "source": "Source", "coverage": "Coverage", "requirements": "Requirements", "deadline": "Deadline", "site": "Official website",
@@ -369,7 +374,18 @@ async def cmd_start(message: types.Message):
     if payload.lower().startswith("link_"):          # ссылка с сайта: t.me/бот?start=link_КОД
         await _do_link(message, payload[5:])
         return
-    await message.answer(tr(lang, "start"), parse_mode="HTML", reply_markup=get_region_menu(lang))
+    await message.answer(tr(lang, "start") + "\n\n" + await people_line(lang), parse_mode="HTML", reply_markup=get_region_menu(lang))
+
+
+async def people_line(lang: str) -> str:
+    """«Нас уже N» — реальные цифры из базы, снимок обновляется раз в день."""
+    try:
+        u = await get_public_usage()
+    except Exception as e:  # счётчик не должен ломать /start
+        logging.warning(f"Счётчик пользователей недоступен: {e}")
+        return ""
+    delta = tr(lang, "people_delta").replace("{d}", str(u["week_delta"])) if u.get("week_delta") else ""
+    return tr(lang, "people_line").replace("{n}", str(u["people"])).replace("{delta}", delta)
 
 
 # --- Привязка сайта ---
@@ -909,8 +925,11 @@ async def cmd_stats(message: types.Message):
     a = await get_audience_stats()
     u, act, nw = a["users"], a["active"], a["new"]
 
+    pub = await get_public_usage()
     lines = [
         "👥 <b>Аудитория</b>\n",
+        f"Публичный счётчик «нас уже»: <b>{pub['people']}</b> (Telegram {pub['telegram']} · сайт {pub['site']}), снимок за {pub['date']}"
+        + (f", +{pub['week_delta']} за неделю" if pub.get("week_delta") else ""),
         f"Всего людей: <b>{u['total']}</b> (Telegram {u['telegram']} · сайт {u['site']})",
         f"Активны сегодня: <b>{act['today']['total']}</b> (бот {act['today']['telegram']} · сайт {act['today']['site']})",
         f"Активны за 7 дней: <b>{act['7d']['total']}</b> (бот {act['7d']['telegram']} · сайт {act['7d']['site']})",
@@ -1225,6 +1244,7 @@ async def main():
     )
     scheduler.add_job(daily_cleanup, "cron", hour=0, minute=1, timezone="UTC", id="daily_cleanup", replace_existing=True)
     scheduler.add_job(weekly_link_check, "cron", day_of_week="mon", hour=3, minute=0, timezone="UTC", id="weekly_links", replace_existing=True)
+    scheduler.add_job(refresh_usage_snapshot, "cron", hour=0, minute=5, timezone="UTC", id="usage_snapshot", replace_existing=True)
     scheduler.start()
     asyncio.create_task(daily_cleanup())  # и сразу при старте: бот мог быть выключен в полночь
 

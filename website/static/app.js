@@ -173,7 +173,9 @@
       $$('[data-count]').forEach(el => countUp(el, s[el.dataset.count] || 0));
       const last = s.last_checked ? new Date(s.last_checked).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : 'ещё не было';
       const hf = $('#heroFoot');
-      if (hf) hf.textContent = `Последняя проверка: ${last} · план: ${s.scan_hours.map(h => String(h).padStart(2, '0') + ':00').join(' и ')} (${s.timezone})`;
+      const u = s.users || {};
+      const ppl = u.people ? ' · ' + t('home.people', { n: u.people }) + (u.week_delta > 0 ? ' (' + t('home.peopleDelta', { d: u.week_delta }) + ')' : '') : '';
+      if (hf) hf.textContent = `Последняя проверка: ${last} · план: ${s.scan_hours.map(h => String(h).padStart(2, '0') + ':00').join(' и ')} (${s.timezone})${ppl}`;
     } catch { /* тихо */ }
   };
 

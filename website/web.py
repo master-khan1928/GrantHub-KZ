@@ -41,6 +41,7 @@ from core.database import (  # noqa: E402
     get_recent_grants, get_all_active_grants,
     save_ai_answer, search_grants, set_answer_rating, set_grant_active, set_user_profile,
     create_link_code, consume_link_code, get_link_code, get_account_by_id, is_linked, get_audience_stats,
+    get_public_usage,
 )
 from core.geo import normalize_country  # noqa: E402
 from core.matching import has_profile, match_grants  # noqa: E402
@@ -703,10 +704,12 @@ async def api_public_stats():
                 open_now = (await cur.fetchone())[0]
             async with db.execute("SELECT MAX(last_checked) FROM monitor_sources") as cur:
                 last_checked = (await cur.fetchone())[0]
+        usage = await get_public_usage()   # реальные цифры: сколько людей уже пользуются, обновляется раз в день
         return {
             "active_total": sum(by_scope.values()), "abroad": by_scope.get(0, 0), "kz": by_scope.get(1, 0),
             "open_now": open_now, "universities": len(UNIVERSITIES), "programs": len(PROGRAMS),
             "last_checked": last_checked, "scan_hours": SCAN_HOURS, "timezone": TIMEZONE,
+            "people": usage["people"], "users": usage,
         }
 
     return await cached(("public_stats",), CACHE_TTL_PAGES, load)
